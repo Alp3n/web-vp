@@ -159,6 +159,8 @@ function inCrownSparse(x: number, y: number): boolean {
 function crownGrid(hit: (x: number, y: number) => boolean, trunkRows: string[], notch: boolean): string[] {
   // Światło pada od góry-lewej: jasny rąbek na łuku NW, ciemny na SE (PLAN.md §6).
   const lit = (x: number, y: number): number => x + 0.5 - 12 + (y + 0.5 - 14);
+  const rimAt = (x: number, y: number): boolean =>
+    hit(x, y) && (!hit(x - 1, y) || !hit(x + 1, y) || !hit(x, y - 1) || !hit(x, y + 1));
   const rows: string[] = [];
   for (let y = 0; y < TREE_H; y += 1) {
     let row = '';
@@ -169,9 +171,13 @@ function crownGrid(hit: (x: number, y: number) => boolean, trunkRows: string[], 
         continue;
       }
       const d = lit(x, y);
-      const rim = !hit(x - 1, y) || !hit(x + 1, y) || !hit(x, y - 1) || !hit(x, y + 1);
-      if (rim && d < -1) row += 'c';
-      else if (rim && d > 1) row += 'a';
+      // Pełny ciemny kontur (1 px) oddziela koronę od trawy w tym samym odcieniu;
+      // jasny rąbek leży tuż pod konturem od strony NW.
+      const rim = rimAt(x, y);
+      const innerRim = rimAt(x - 1, y) || rimAt(x + 1, y) || rimAt(x, y - 1) || rimAt(x, y + 1);
+      if (rim) row += 'o';
+      else if (innerRim && d < -1) row += 'c';
+      else if (innerRim && d > 1) row += 'a';
       else if (d > 1 && (x * 5 + y * 3) % 11 === 0) row += 'a';
       else if (d < -1 && (x * 3 + y * 7) % 13 === 0) row += 'c';
       else row += 'b';
@@ -352,11 +358,11 @@ const natureFile = `/**
 import { PALETTE } from './palette.ts';
 import { ANCHOR_FOOT, sprite, type SpriteDef } from './sprite.ts';
 
-/** a = cień korony, b = liście, c = światło; p/q/o = pień, w = świeże drewno w nacięciu. */
+/** a = cień korony, b = liście, c = światło; p/q = pień, o = kontur i cień pnia, w = świeże drewno w nacięciu. */
 const TREE = {
-  a: PALETTE.darkGreen,
-  b: PALETTE.midGreen,
-  c: PALETTE.green,
+  a: PALETTE.darkTeal,
+  b: PALETTE.darkGreen,
+  c: PALETTE.midGreen,
   p: PALETTE.brown,
   q: PALETTE.leather,
   o: PALETTE.darkBrown,

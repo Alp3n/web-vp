@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { BootScene } from './render/BootScene';
+import { GameScene } from './render/GameScene';
 import { registerServiceWorker } from './pwa/register-sw';
 
 const config: Phaser.Types.Core.GameConfig = {
@@ -17,7 +18,7 @@ const config: Phaser.Types.Core.GameConfig = {
   input: {
     activePointers: 3,
   },
-  scene: [BootScene],
+  scene: [BootScene, GameScene],
 };
 
 export const game = new Phaser.Game(config);

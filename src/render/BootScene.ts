@@ -1,57 +1,60 @@
 import Phaser from 'phaser';
+import type { FrameDir } from './facing';
 
-const FPS_UPDATE_MS = 250;
+/** Klucz tekstury atlasu — ten sam dla wszystkich scen. */
+export const ATLAS_KEY = 'atlas';
+
+/** Kierunki narysowane w atlasie (kolejność bez znaczenia — tworzymy animacje dla wszystkich). */
+const FRAME_DIRS: readonly FrameDir[] = ['ne', 'se', 'sw', 'nw'];
+
+const WALK_FPS = 8;
+const WALK_FRAMES = 4;
+const IDLE_FPS = 2;
+const IDLE_FRAMES = 2;
 
 /**
- * Faza 0: pusta scena — tło, tytuł na środku i licznik FPS w lewym górnym rogu.
- * Faza 1 zastąpi ją `GameScene` (grid iso, kamera, robotnik).
+ * Faza 1: ładuje atlas, rejestruje animacje robotnika i oddaje scenę `GameScene`.
+ * Paska ładowania nie ma — atlas to ~2 kB i jeden request.
  */
 export class BootScene extends Phaser.Scene {
-  private title!: Phaser.GameObjects.Text;
-  private fpsText!: Phaser.GameObjects.Text;
-  private fpsTimer = 0;
-
   constructor() {
     super('Boot');
   }
 
+  preload(): void {
+    // Ścieżki względne: Vite serwuje `assets/build` jako publicDir, a `base: './'`
+    // pozwala hostować grę w podkatalogu (GitHub Pages).
+    this.load.atlas(ATLAS_KEY, 'atlas.png', 'atlas.json');
+  }
+
   create(): void {
-    const { width, height } = this.scale.gameSize;
-
-    this.cameras.main.setBackgroundColor('#0b0c14');
-
-    this.title = this.add
-      .text(width / 2, height / 2, 'Nightfall — Faza 0', {
-        fontFamily: 'system-ui, -apple-system, "Segoe UI", sans-serif',
-        fontSize: '28px',
-        color: '#e6e8f0',
-      })
-      .setOrigin(0.5);
-
-    this.fpsText = this.add
-      .text(8, 8, 'FPS --', {
-        fontFamily: 'ui-monospace, Menlo, Consolas, monospace',
-        fontSize: '14px',
-        color: '#8be28b',
-      })
-      .setOrigin(0, 0);
-
-    this.scale.on(Phaser.Scale.Events.RESIZE, this.handleResize, this);
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
-      this.scale.off(Phaser.Scale.Events.RESIZE, this.handleResize, this);
-    });
+    this.createUnitAnims('worker');
+    this.scene.start('Game');
   }
 
-  override update(_time: number, delta: number): void {
-    this.fpsTimer += delta;
-    if (this.fpsTimer >= FPS_UPDATE_MS) {
-      this.fpsTimer = 0;
-      this.fpsText.setText(`FPS ${Math.round(this.game.loop.actualFps)}`);
+  /** `{kind}_walk_{dir}` (4 klatki, 8 fps) i `{kind}_idle_{dir}` (2 klatki, 2 fps). */
+  private createUnitAnims(kind: string): void {
+    for (const dir of FRAME_DIRS) {
+      this.anims.create({
+        key: `${kind}_walk_${dir}`,
+        frames: this.anims.generateFrameNames(ATLAS_KEY, {
+          prefix: `${kind}_walk_${dir}_`,
+          start: 0,
+          end: WALK_FRAMES - 1,
+        }),
+        frameRate: WALK_FPS,
+        repeat: -1,
+      });
+      this.anims.create({
+        key: `${kind}_idle_${dir}`,
+        frames: this.anims.generateFrameNames(ATLAS_KEY, {
+          prefix: `${kind}_idle_${dir}_`,
+          start: 0,
+          end: IDLE_FRAMES - 1,
+        }),
+        frameRate: IDLE_FPS,
+        repeat: -1,
+      });
     }
-  }
-
-  private handleResize(gameSize: Phaser.Structs.Size): void {
-    this.cameras.resize(gameSize.width, gameSize.height);
-    this.title.setPosition(gameSize.width / 2, gameSize.height / 2);
   }
 }

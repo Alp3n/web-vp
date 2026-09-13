@@ -95,3 +95,71 @@ SW/NW to `flipX` z SE/NE, ale w atlasie istnieją wszystkie cztery nazwy (kontra
 
 **Rozmiar sprite'ów robotnika: 16×24.** `docs/architecture.md` mówił „~16×24”, PLAN §6 „jednostki
 16–24 px wysokości”. Ustalone: płótno 16×24, sylwetka ~11×22 (z siekierą ~13 px szerokości).
+
+## 2026-09-13 — Faza 1: `depthFor` = ekranowy Y punktu
+
+`src/render/iso.ts` definiuje `depthFor(gx, gy) = (gx + gy) * TILE_H / 2`, czyli dokładnie `screenY`
+danego punktu siatki (kontrakt mówi „depth = isoY + offset", offset = 0). Dzięki temu depth da się
+porównywać z pozycją ekranową bez przeliczeń, a wartości mieszczą się w 0…1024 dla mapy 64×64.
+Teren dostaje stałe `depth = -1000` (jest zawsze pod wszystkim), cień jednostki `depth - 0.5`.
+
+## 2026-09-13 — Faza 1: teren jako jedna `RenderTexture` 2048×1024
+
+4096 kafli rysowanych jest RAZ w `create()` (`beginDraw` / `batchDrawFrame` / `endDraw`) do jednej
+tekstury i dalej istnieje jako jeden obiekt wyświetlania — zero kosztu sortowania i renderowania
+per kafel w klatce (notatki o Phaserze: renderer nie robi cullingu i sortuje wszystkie dzieci).
+Tekstura jest zakotwiczona (`setOrigin(0, 0)`) w lewym górnym rogu bounding boxa mapy, który ma
+**ujemne x** (skrajnie lewy kafel to (0, MAP_H) → `screenX = -MAP_H * 16 = -1024`); `mapBounds()`
+zwraca ten prostokąt i służy zarazem za `camera.setBounds`. Drzewa (609 dla seeda 42) to zwykłe
+`Image` z `depth` ustawionym RAZ — nie ruszają się, więc nie ma powodu ich co klatkę sortować.
+
+## 2026-09-13 — Faza 1: HUD na osobnej kamerze zamiast overlaya DOM
+
+PLAN §1 dopuszcza „HUD w Phaserze albo cienki overlay DOM". Wybrany został Phaser + **druga
+kamera** (`this.cameras.add()`, zoom 1), bo joystick i tak musi być rysowany w Phaserze
+(`Graphics`), a `setScrollFactor(0)` **nie chroni przed zoomem kamery** — przy zoomie 2–3 HUD
+i joystick byłyby powiększone razem ze światem. Kamera świata ignoruje obiekty HUD, kamera HUD
+ignoruje obiekty świata (`camera.ignore`), więc jedno i drugie renderuje się w swojej skali.
+Tekst: monospace 12 px, `setResolution(2)` (ostrość na HiDPI) i półprzezroczysta podkładka —
+bez niej biały tekst ginął na jasnej trawie (widać na `phase1-a.png`).
+
+## 2026-09-13 — Faza 1: mapowanie `Dir8` → klatka sprite'a (`src/render/facing.ts`)
+
+Atlas ma cztery narysowane kierunki (`ne`, `se`, `sw`, `nw`) = przekątne siatki, czyli `Dir8`
+1/3/5/7. Cztery kierunki osiowe leżą **dokładnie** pomiędzy dwoma narysowanymi (odległość kątowa
+jest równa w obie strony), więc zamiast wyjątków przyjęta jest jedna reguła: zaokrąglamy zgodnie
+z ruchem wskazówek zegara, `dir + 1` (N → `ne`, E → `se`, S → `sw`, W → `nw`).
+`flipX` jest w Fazie 1 **zawsze `false`** — pipeline (`assets/src/worker.ts`) robi flip już przy
+budowaniu atlasu, więc wszystkie cztery kierunki istnieją jako osobne klatki i render nie musi nic
+odbijać. Pole `flipX` zostaje w typie `Facing` na sprite'y, które w przyszłości będą rysowane
+tylko w dwóch kierunkach.
+
+## 2026-09-13 — Faza 1: kierunek z joysticka liczony przez sam obrót układu
+
+`src/input/joystick.ts` przepuszcza **wektor** ekranowy przez `screenToGrid` (bez translacji —
+`screenToGrid` jest liniowe, więc dla wektora daje czysty obrót + skalowanie osi), normalizuje go
+i dopiero wtedy woła `dirFromVector` z symulacji. Dzięki temu „w prawo" na ekranie zawsze znaczy
+ruch w prawo na ekranie (NE w siatce), niezależnie od pozycji kamery. Klawiatura (WASD/strzałki)
+idzie tą samą ścieżką, więc palec i klawisz dają identyczne kierunki.
+
+## 2026-09-13 — Faza 1: `window.nightfall` jako uchwyt testowy (również w buildzie produkcyjnym)
+
+`GameScene` wystawia `window.nightfall = { scene, snapshot() }` (tick, pozycja, facing, klucz
+i klatka animacji, FPS, zoom). Testy e2e (Playwright) sprawdzają ruch i animację **na buildzie
+produkcyjnym**, a stan gry jest w canvasie — bez tego uchwytu trzeba by OCR-ować HUD. Koszt to
+jedna referencja na `window`; gdy w Fazie 6 pojawi się tryb „release", można ją schować za flagą.
+
+## 2026-09-13 — Faza 1: znalezione w assetach (do naprawy po stronie `assets/src`, nie w renderze)
+
+Na zrzutach (`phase1-a.png`, `phase1-edge.png`) korony drzew niemal znikają na trawie: `tree_full`
+używa `PALETTE.midGreen` (`#3e8948`) jako koloru wypełnienia korony, a `tile_grass0` ma **ten sam**
+`#3e8948` jako kolor bazowy kafla. Widać tylko jasny kontur korony. Na `tile_grass1`/`tile_grass2`
+(ciemniejsza trawa) i na ziemi drzewa są czytelne. Zgodnie z PLAN §6 („jeśli sprite wygląda źle —
+popraw grid, nie dodawaj obejść w kodzie renderu") render **nie** tintuje drzew — poprawka należy
+do `assets/src/nature.ts` (ciemniejsza korona / mocniejszy kontur od spodu).
+
+## Faza 1 — korona drzewa z konturem (nadzorca)
+Korona `tree_full` miała bazę `midGreen`, identyczną z bazą `tile_grass0` — drzewa znikały na jasnej trawie
+(screenshot `phase1-c.png`). Poprawka w generatorze (`scripts/gen-grids.ts`), nie w renderze (PLAN §6):
+baza korony `darkGreen`, cień `darkTeal`, światło `midGreen`, plus pełny 1-px kontur `darkBrown`.
+Zweryfikowane w grze (`phase1-trees.png`): drzewa czytelne na grass0/1/2 i ziemi.
