@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#0b0c14" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="icon" type="image/svg+xml" href="./icon.svg" />
+    <link rel="apple-touch-icon" href="./icon.svg" />
+    <title>Nightfall</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #0b0c14;
+        overflow: hidden;
+        touch-action: none;
+        overscroll-behavior: none;
+        -webkit-user-select: none;
+        user-select: none;
+        -webkit-tap-highlight-color: transparent;
+      }
+      #game {
+        width: 100%;
+        height: 100%;
+      }
+      canvas {
+        display: block;
+      }
+      #rotate {
+        display: none;
+        position: fixed;
+        inset: auto 0 12px 0;
+        z-index: 10;
+        pointer-events: none;
+        text-align: center;
+        font: 600 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+        color: #e6e8f0;
+        text-shadow: 0 1px 2px #000;
+      }
+      @media (orientation: portrait) {
+        #rotate {
+          display: block;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="game"></div>
+    <div id="rotate">Obróć telefon poziomo</div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
