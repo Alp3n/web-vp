@@ -34,6 +34,8 @@ export const BALANCE = {
     tileW: TILE_W,
     tileH: TILE_H,
     unitRadius: UNIT_RADIUS,
+    /** Krótszy wektor wejścia niż to = brak kierunku (`dirFromVector` -> null). */
+    dirMinLength: 0.001,
   },
 
   round: {
@@ -135,6 +137,85 @@ export const BALANCE = {
   economy: {
     startingWood: 0,
     startingGold: 0,
+  },
+
+  trees: {
+    /** Ile drewna ma pełne drzewo (3 rąbnięcia po 10). */
+    woodPerTree: 30,
+    /** Ile rąbnięć zamienia pełne drzewo w pień (Faza 2). */
+    chopsToStump: 3,
+  },
+
+  /**
+   * Parametry generatora mapy (`src/sim/world.ts`). Wszystko deterministyczne:
+   * każdy losowy wybór idzie przez `rngNext(world.rng)`.
+   */
+  mapgen: {
+    grass: {
+      /** Rozmiar komórki value-noise (w kaflach) — im większy, tym większe plamy. */
+      cellLarge: 9,
+      cellSmall: 4,
+      /** Waga oktawy „dużej" (reszta idzie do małej). */
+      weightLarge: 0.65,
+      /** Udziały wariantów trawy: 60 / 25 / 15 % (kwantyle szumu). */
+      shareGrass0: 0.6,
+      shareGrass1: 0.25,
+    },
+    dirt: {
+      patchesMin: 3,
+      patchesMax: 6,
+      radiusMin: 2.5,
+      radiusMax: 5.5,
+      pathsMin: 1,
+      pathsMax: 2,
+      pathStepsMin: 18,
+      pathStepsMax: 36,
+      pathHalfWidth: 1.2,
+      /** Margines od krawędzi mapy (kafle), żeby ziemia nie wchodziła w wodę. */
+      margin: 4,
+    },
+    water: {
+      /** Pierścień wody na krawędzi mapy (kafle). */
+      borderRing: 1,
+      covesMin: 3,
+      covesMax: 6,
+      coveRadiusMin: 2,
+      coveRadiusMax: 4.5,
+      /** Jak głęboko w ląd może sięgnąć zatoczka (kafle od krawędzi). */
+      coveMaxDepth: 5,
+    },
+    clearings: {
+      countMin: 3,
+      countMax: 4,
+      radiusMin: 5,
+      radiusMax: 7,
+      /** Maksymalne przesunięcie polany startowej od środka mapy (kafle). */
+      startOffsetMax: 4,
+      /** Margines od krawędzi dla pozostałych polan (kafle). */
+      margin: 10,
+      /** Wokół startu w tym promieniu nigdy nie ma drzewa (kafle). */
+      startSafeRadius: 4.5,
+    },
+    treeClusters: {
+      countMin: 6,
+      countMax: 10,
+      radiusMin: 4,
+      radiusMax: 8,
+      /** Margines od krawędzi dla środków skupisk (kafle). */
+      margin: 6,
+      /**
+       * Wykładnik promienia przy losowaniu punktu: d = r * u^exp.
+       * exp < 0.5 zagęszcza brzegi, exp > 0.5 zagęszcza środek (gęstość maleje od środka).
+       */
+      radialExponent: 0.9,
+      /** Łączna liczba drzew na mapie (PLAN: ok. 500–700). */
+      totalMin: 540,
+      totalMax: 660,
+      /** Jaka część drzew to rzadkie pojedyncze sztuki poza skupiskami. */
+      scatteredFraction: 0.12,
+      /** Budżet prób losowania na jedno drzewo (ochrona przed pętlą). */
+      attemptsPerTree: 40,
+    },
   },
 
   ai: {
