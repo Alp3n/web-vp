@@ -77,3 +77,37 @@ function rngNext(state: {state:number}): number    // krok na stanie w World
 - `src/render/GameScene.ts` — akumulator czasu → stały `step()` co 50 ms; render interpoluje między `prevPos` a `pos` (render trzyma własną mapę poprzednich pozycji).
 - `src/input/joystick.ts` — pływający joystick na lewej połowie ekranu, zwraca wektor ekranowy → `screenToGrid` → snap do `Dir8` → `MoveCommand` co tick (i `dir: null` po puszczeniu).
 - HUD: FPS + tick w rogu (Phaser Text lub cienki DOM overlay).
+
+## Wywyższenia (elewacja) — rozszerzenie kontraktu po playteście Fazy 1
+
+Poziomy terenu: `0` (ziemia) i `1` (płaskowyż). Przejście między poziomami tylko przez **rampy** o szerokości 2 kafli.
+
+### Stałe (`balance.ts`)
+- `ELEV_LEVELS = 2`, `ELEV_PX = 10` — o ile pikseli (1×) wyżej rysowany jest poziom 1 (wysokość klifu).
+- `mapgen.plateaus`: liczba 2–4, promień 5–9, min. dystans od startu 12 kafli, rampy: min. 1 na płaskowyż, szerokość 2.
+- `mapgen.rocks`: 20–40 głazów poza płaskowyżami/polaną startową (blokują jak drzewa).
+
+### Sim — nowe pola `World`
+```ts
+elevation: Uint8Array;   // 0|1 per kafel, index = y*width + x
+ramp: Uint8Array;        // 0 = brak; 1..4 = kierunek POD GÓRĘ w przestrzeni siatki: 1=N(-y), 2=E(+x), 3=S(+y), 4=W(-x)
+rocks: Rock[];           // { id, x, y, size: 0|1 } — statyczne blokery (w `blocked`)
+```
+Kafel rampy ma `elevation` = poziom **dolny** (podstawa); jego sąsiad w kierunku `ramp` ma poziom wyższy o 1.
+Rampa 2-kaflowa = dwa sąsiednie kafle rampy o tym samym kierunku, obok siebie prostopadle do kierunku.
+
+### Reguła przejścia `canCross(world, ax, ay, bx, by): boolean` (sąsiedzi 4-kierunkowi; eksport z `src/sim/systems/terrain.ts`)
+- oba kafle niezablokowane (`blocked`), inaczej `false`;
+- bez ramp: `elev[a] == elev[b]`;
+- `a` jest rampą (`rA`): B w kierunku `rA` → `elev[b] == elev[a] + 1`; B w kierunku przeciwnym → `elev[b] == elev[a]` i `ramp[b] == 0`; B prostopadle → `elev[b] == elev[a]` i (`ramp[b] == 0` lub `ramp[b] == rA`);
+- symetrycznie, gdy rampą jest `b` (`canCross` jest symetryczne: `canCross(a,b) == canCross(b,a)`);
+- przekątne: dozwolone tylko, gdy obie ścieżki „po L" (przez dwa sąsiednie kafle ortogonalne) są przejezdne.
+Ruch (`movement.ts`): po przesunięciu osiowym kandydat jest odrzucany, jeśli kafel pod środkiem zmienił się na nieprzejezdny wg `canCross`, albo jeśli okrąg jednostki zachodzi na kafel `X ≠ T'`, dla którego `canCross(T', X)` jest fałszywe (przekątne wg reguły L). Klify działają jak ściany, rampy jak korytarze.
+
+### `elevationAt(world, gx, gy): number` (float, eksport z terrain.ts)
+Dla zwykłego kafla: `elevation`. Dla rampy: `elevation + f`, gdzie `f ∈ [0,1]` to postęp środka jednostki wzdłuż osi rampy w stronę góry (np. rampa `N`: `f = 1 - frac(gy)`; `E`: `f = frac(gx)`; `S`: `f = frac(gy)`; `W`: `f = 1 - frac(gx)`). Render używa `screenY -= elevationAt(...) * ELEV_PX` dla jednostek i drzew.
+
+### Render
+- Kolejność malowania kafli w RenderTexture: rosnące `gx + gy`, w rzędzie rosnące `gx`. Dla kafla: najpierw ściany klifu (gdy sąsiad S `(x, y+1)` lub E `(x+1, y)` jest niżej i nie jest rampą prowadzącą na ten kafel), potem wierzch przesunięty o `-elev * ELEV_PX`. Ściany leżą wewnątrz nieprzesuniętego diamentu kafla, więc nie kolidują z bliższymi kaflami.
+- Rampa: sprite `ramp_{n|e|s|w}` rysowany w miejscu kafla (zawiera własne ścianki boczne), przesunięty o `-elev * ELEV_PX`.
+- Klatki atlasu: `cliff_s`, `cliff_e` (ściany 16×(8+ELEV_PX) — ściana S to lewa dolna krawędź diamentu, E to prawa dolna), `cliff_corner` (opcjonalnie, styk S/E), `ramp_n`, `ramp_e`, `ramp_s`, `ramp_w` (32×(16+ELEV_PX), anchor tak, by dolny diament pokrywał kafel), `rock_small` (~12×10), `rock_big` (~20×16), anchor stopa (środek kafla).
