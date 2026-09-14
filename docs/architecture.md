@@ -113,3 +113,44 @@ Dla zwykłego kafla: `elevation`. Dla rampy: `elevation + f`, gdzie `f ∈ [0,1]
 - Rąbek górnej krawędzi: `ledge_n` (sąsiad N `(x, y-1)` niżej i nie jest rampą o kierunku S) i `ledge_w` (sąsiad W `(x-1, y)` niżej i nie jest rampą o kierunku E), malowane PO wierzchu, z tym samym przesunięciem `-elev * ELEV_PX`. Ściany N/W nie istnieją, więc to jedyna sylwetka płaskowyżu od strony górnej-ekranowej.
 - Rampa: sprite `ramp_{n|e|s|w}` rysowany w miejscu kafla (zawiera własne ścianki boczne), przesunięty o `-elev * ELEV_PX`. Rampy `e`/`s` mają dodatkowo podjazd („apron") wychodzący `RAMP_APRON` px ponad diament kafla — bez niego widać z nich tylko 6-px pasek.
 - Klatki atlasu: `cliff_s`, `cliff_e` (ściany 16×(8+ELEV_PX) — ściana S to lewa dolna krawędź diamentu, E to prawa dolna), `cliff_corner` (opcjonalnie, styk S/E), `ledge_n`, `ledge_w` (rąbki 16×9, anchor `{0, 8/9}` / `{1, 8/9}` — górna połowa diamentu), `ramp_n`, `ramp_e`, `ramp_s`, `ramp_w` (32×(16+ELEV_PX), anchor tak, by dolny diament pokrywał kafel), `tile_grass_hi{0,1,2}` (32×16, jak zwykłe kafle), `rock_small` (~12×10), `rock_big` (~20×16), anchor stopa (środek kafla).
+
+## Faza 2 — ekonomia i budowanie (kontrakt)
+
+### Sim — nowe pola i typy
+```ts
+type BuildingKind = 'wall' | 'tower' | 'sawmill' | 'generator';
+interface Building { id: EntityId; kind: BuildingKind; x: number; y: number; w: number; h: number;
+  hp: number; maxHp: number; level: number; buildTicksLeft: number /* 0 = gotowy */ }
+type UnitAction = null | { type: 'chop'; treeId: EntityId; ticksLeft: number };
+// Unit: + action: UnitAction
+// World: + buildings: Building[]; woodFrac: number (ułamek drewna z tartaków, akumulowany)
+// Tree: + chops: number (ile razy nadrąbane)
+```
+Komendy: `chop {unitId, treeId}`, `build {unitId, building: BuildingKind, x, y}`, `cancel {unitId}` (już w typie `Command`).
+
+### Reguły
+- **Rąbanie**: `chop` jest przyjęte, gdy dystans środka jednostki do środka kafla drzewa `≤ worker.interactRange` i drzewo nie jest pieńkiem. Ustawia `unit.action = {chop, ticksLeft: worker.chopTicks}` i zatrzymuje jednostkę (`vel = 0, moving = false`). Komenda `move` z `dir != null` lub `cancel` przerywa akcję. Gdy `ticksLeft` dojdzie do 0: `wood += worker.chopWood`, `tree.chops++`, `tree.wood -= chopWood`; `chops == 1` → `state = 'chopped'`; `chops >= trees.chopsToStump` → `state = 'stump'`, kafel przestaje blokować (`blocked = 0`). Jednostka obraca się (`facing`) w stronę drzewa przy starcie rąbania.
+- **Budowa**: `build` jest przyjęte, gdy: kind ∈ {wall, sawmill} (tower/generator → Faza 4, odrzucane), `wood >= koszt`, cały footprint (w×h od (x,y)) leży w mapie, nie jest zablokowany, nie ma rampy, ma jedną wspólną elewację, nie zachodzi na okrąg żadnej jednostki, oraz odległość środka jednostki do najbliższego kafla footprintu `≤ BALANCE.build.rangeTiles` (= 5). Skutek: `wood -= koszt`, nowy `Building` z `buildTicksLeft = buildTicks`, `hp = maxHp` (v1: budynek w budowie ma pełne HP, ale nie działa), footprint → `blocked = 1`.
+- **Konstrukcja**: co tick `buildTicksLeft--` (bez robotnika). Tartak działa, gdy `buildTicksLeft == 0`.
+- **Tartak**: co tick, jeśli w promieniu `sawmill.treeRadiusTiles` od środka footprintu jest ≥ 1 drzewo `full|chopped`: `woodFrac += woodPerSecond / TICK_RATE`; gdy `woodFrac >= 1` → przenieś część całkowitą do `wood`.
+- **Kolejność w `step`**: komendy (move/chop/build/cancel) → ruch → akcje jednostek (chop) → konstrukcja → ekonomia (tartak) → `tick++`.
+- `hashWorld` obejmuje `buildings`, `woodFrac`, `unit.action`, `tree.chops`.
+- Helpery (czyste, eksport z `src/sim`): `nearestChoppableTree(world, pos, range)`, `canPlaceBuilding(world, unitId, kind, x, y): { ok: boolean; reason?: string }`, `buildingAt(world, x, y)`, `wallMask(world, x, y): number` (bit 1=N, 2=E, 4=S, 8=W: sąsiedni kafel to mur), `footprintOf(kind)`.
+
+### Assets — nowe klatki
+- `wall_0` … `wall_15` — mur 1×1, 32×32 (anchor: dół sprite'a = dolny narożnik diamentu kafla → pivot `{0.5, 1}`, sprite umieszczany w środku kafla + offset 8 px w dół? Ustal w generatorze i zapisz w atlasie jako pivot). Indeks = maska N|E|S|W (1|2|4|8). Słupek kamienny + segmenty do każdej połączonej krawędzi (N: górna-prawa, E: dolna-prawa, S: dolna-lewa, W: górna-lewa).
+- `wall_build` — nakładka/wariant „w budowie" (rusztowanie) 32×32, albo render używa alpha 0.5 + tint (decyzja agenta grafik; zapisz w decisions).
+- `sawmill` — 2×2, 64×48, pivot tak, by dolny narożnik footprintu (kafel (x+1,y+1) dół) był w dolnym środku sprite'a; drewniana chata z piłą/kołem, stos desek.
+- `generator` — 2×2, 64×48 (Faza 4, ale sprite teraz); `tower_1` — 1×1, 32×48 (Faza 4, sprite teraz, drugi poziom później).
+- `worker_chop_{ne,se,sw,nw}` — 3 klatki zamachu siekierą.
+- `fx_chip` — 3×3 wiór (efekt rąbania), `fx_hit` — 8×8 błysk (na później).
+- HUD (SVG → PNG 2× przez sharp, osobny atlas `hud.png`/`hud.json`): `icon_wood`, `icon_axe`, `icon_build`, `icon_wall`, `icon_sawmill`, `icon_tower`, `icon_generator`, `icon_cancel`, `btn_ring` (okrągły przycisk 96 px @2×), `radial_slot`. Źródła w `assets/src/hud/*.svg`.
+
+### Input / render
+- **Przycisk akcji** (prawa dolna ćwiartka, duży okrąg ~72 px ekranowych): kontekst: w trybie budowy → „postaw"; w zasięgu drzewa (`nearestChoppableTree`) → „rąb" (ikona siekiery); inaczej nieaktywny (przyciemniony).
+- **Przycisk „Buduj"** (nad przyciskiem akcji) otwiera **menu radialne** (mur, tartak; wieża i generator widoczne, ale wyszarzone z podpisem „Faza 4"). Wybór → tryb budowy z ghostem.
+- **Tryb budowy**: ghost budynku na kaflu przed robotnikiem (kafel w kierunku `facing`, dla 2×2 lewy-górny = ten kafel), zielony (ok) / czerwony (`canPlaceBuilding.reason`). Przycisk akcji = `build`. Przycisk „X" zamyka tryb. **Drag-to-build (mur)**: przeciąganie palcem po mapie (poza joystickiem, poza przyciskami) przesuwa kursor po kaflach; dla każdego nowego kafla na ścieżce (Bresenham między kolejnymi kaflami) wysyłana jest komenda `build wall` jeśli `canPlaceBuilding.ok`; kafle poza zasięgiem / bez drewna → czerwony ghost, brak komendy. Ghost podąża za palcem podczas przeciągania. Kamera nie przewija się podczas drag-to-build.
+- **HUD**: lewy górny: drewno (ikona + liczba), timer rundy (mm:ss, Faza 3 użyje), FPS/tick w debug (parametr `?debug=1`).
+- **Render budynków**: `Image`/`Sprite` z depth `depthFor(x + w, y + h)` (dolny narożnik footprintu), elewacja jak propy; w budowie: alpha 0.55 + pasek postępu (Graphics) nad budynkiem. Mury: klatka `wall_{mask}` odświeżana, gdy zmieni się `wallMask` dla kafla lub sąsiadów.
+- Drzewo `chopped`/`stump` zmienia klatkę; przy stump kafel przestaje blokować także w renderze (nic do zrobienia poza klatką).
+- Rąbanie: animacja `worker_chop_{dir}` w pętli, gdy `unit.action?.type === 'chop'`; wióry `fx_chip` (3–4 cząstki, 300 ms) co uderzenie (co `chopTicks/3`).
