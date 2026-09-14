@@ -7,7 +7,7 @@
 import { BALANCE, MAP_H, MAP_W } from './balance';
 import { rngInt, rngNext, rngRange } from './rng';
 import { canCross, canCrossTerrain, rampDirVector } from './systems/terrain';
-import type { RampDir, Rock, Tree, Unit, World } from './types';
+import type { BuildingKind, RampDir, Rock, Tree, Unit, World } from './types';
 import { TILE_DIRT, TILE_GRASS0, TILE_GRASS1, TILE_GRASS2, TILE_WATER } from './types';
 
 const MAPGEN = BALANCE.mapgen;
@@ -37,7 +37,9 @@ export function createEmptyWorld(seed: number, w: number, h: number): World {
     trees: [],
     rocks: [],
     units: [],
+    buildings: [],
     wood: BALANCE.economy.startingWood,
+    woodFrac: 0,
     gold: BALANCE.economy.startingGold,
     nextId: 1,
     rng: { state: seed | 0 },
@@ -252,6 +254,7 @@ function plantTree(
     y: ty,
     wood: BALANCE.trees.woodPerTree,
     state: 'full',
+    chops: 0,
   };
   world.trees.push(tree);
   world.blocked[idx] = 1;
@@ -330,6 +333,7 @@ function spawnWorker(world: World, start: TilePos): Unit {
     hp: BALANCE.worker.hp,
     maxHp: BALANCE.worker.maxHp,
     speed: BALANCE.worker.speedTilesPerS,
+    action: null,
   };
   world.units.push(worker);
   return worker;
@@ -782,7 +786,14 @@ export function cloneWorld(world: World): World {
     blocked: world.blocked.slice(),
     elevation: world.elevation.slice(),
     ramp: world.ramp.slice(),
-    trees: world.trees.map((t) => ({ id: t.id, x: t.x, y: t.y, wood: t.wood, state: t.state })),
+    trees: world.trees.map((t) => ({
+      id: t.id,
+      x: t.x,
+      y: t.y,
+      wood: t.wood,
+      state: t.state,
+      chops: t.chops,
+    })),
     rocks: world.rocks.map((r) => ({ id: r.id, x: r.x, y: r.y, size: r.size })),
     units: world.units.map((u) => ({
       id: u.id,
@@ -794,8 +805,22 @@ export function cloneWorld(world: World): World {
       hp: u.hp,
       maxHp: u.maxHp,
       speed: u.speed,
+      action: u.action === null ? null : { ...u.action },
+    })),
+    buildings: world.buildings.map((b) => ({
+      id: b.id,
+      kind: b.kind,
+      x: b.x,
+      y: b.y,
+      w: b.w,
+      h: b.h,
+      hp: b.hp,
+      maxHp: b.maxHp,
+      level: b.level,
+      buildTicksLeft: b.buildTicksLeft,
     })),
     wood: world.wood,
+    woodFrac: world.woodFrac,
     gold: world.gold,
     nextId: world.nextId,
     rng: { state: world.rng.state },
@@ -827,6 +852,14 @@ function fnvFloat(hash: number, value: number): number {
 
 const TREE_STATE_CODE: Record<Tree['state'], number> = { full: 0, chopped: 1, stump: 2 };
 const UNIT_KIND_CODE: Record<Unit['kind'], number> = { worker: 0, vampire: 1 };
+/** 0 jest zarezerwowane dla „brak akcji", więc kody typów zaczynają się od 1. */
+const ACTION_TYPE_CODE: Record<'chop', number> = { chop: 1 };
+const BUILDING_KIND_CODE: Record<BuildingKind, number> = {
+  wall: 0,
+  tower: 1,
+  sawmill: 2,
+  generator: 3,
+};
 
 /**
  * Kanoniczny hash stanu świata (FNV-1a 32-bit, 8 znaków hex).
@@ -839,6 +872,7 @@ export function hashWorld(world: World): string {
   h = fnv(h, world.width);
   h = fnv(h, world.height);
   h = fnvFloat(h, world.wood);
+  h = fnvFloat(h, world.woodFrac);
   h = fnvFloat(h, world.gold);
   h = fnv(h, world.nextId);
   h = fnv(h, world.rng.state);
@@ -852,6 +886,7 @@ export function hashWorld(world: World): string {
     h = fnv(h, tree.y);
     h = fnvFloat(h, tree.wood);
     h = fnv(h, TREE_STATE_CODE[tree.state]);
+    h = fnv(h, tree.chops);
   }
   for (const rock of world.rocks) {
     h = fnv(h, rock.id);
@@ -871,6 +906,22 @@ export function hashWorld(world: World): string {
     h = fnvFloat(h, unit.hp);
     h = fnvFloat(h, unit.maxHp);
     h = fnvFloat(h, unit.speed);
+    // Akcja: kod typu (0 = brak), potem id celu i pozostałe ticki.
+    h = fnv(h, unit.action === null ? 0 : ACTION_TYPE_CODE[unit.action.type]);
+    h = fnv(h, unit.action === null ? 0 : unit.action.treeId);
+    h = fnv(h, unit.action === null ? 0 : unit.action.ticksLeft);
+  }
+  for (const building of world.buildings) {
+    h = fnv(h, building.id);
+    h = fnv(h, BUILDING_KIND_CODE[building.kind]);
+    h = fnv(h, building.x);
+    h = fnv(h, building.y);
+    h = fnv(h, building.w);
+    h = fnv(h, building.h);
+    h = fnvFloat(h, building.hp);
+    h = fnvFloat(h, building.maxHp);
+    h = fnv(h, building.level);
+    h = fnv(h, building.buildTicksLeft);
   }
   return (h >>> 0).toString(16).padStart(8, '0');
 }

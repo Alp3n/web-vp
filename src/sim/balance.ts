@@ -133,6 +133,19 @@ export const BALANCE = {
     },
   },
 
+  /** Tryb budowy (kontrakt: docs/architecture.md, „Faza 2 — ekonomia i budowanie"). */
+  build: {
+    /**
+     * Maksymalna odległość (kafle) środka jednostki od najbliższego kafla footprintu,
+     * przy której komenda `build` jest przyjmowana.
+     */
+    rangeTiles: 5,
+    /** Rodzaje dostępne w Fazie 2; reszta odrzucana z powodem „niedostępne w tej fazie". */
+    availableKinds: ['wall', 'sawmill'],
+    /** Poziom ulepszenia nowego budynku. */
+    startLevel: 0,
+  },
+
   upgrades: {
     maxLevel: 3,
     /** +50% na poziom (mnożnik bazowej wartości). */

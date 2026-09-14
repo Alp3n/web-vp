@@ -40,6 +40,7 @@ function addUnit(world: World, x: number, y: number): Unit {
     hp: 100,
     maxHp: 100,
     speed: SPEED,
+    action: null,
   };
   world.units.push(unit);
   return unit;

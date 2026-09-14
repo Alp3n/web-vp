@@ -7,7 +7,7 @@
 
 import { TICK_RATE, UNIT_RADIUS } from '../balance';
 import type { Command } from '../commands';
-import type { World } from '../types';
+import type { Dir8, Unit, World } from '../types';
 import { DIR_VECTORS, isBlocked, unitById } from '../types';
 import { canCross } from './terrain';
 
@@ -82,26 +82,32 @@ export function canStandAt(
 }
 
 /**
- * Komendy `move` -> `vel`, `facing`, `moving`.
- * `dir: null` zatrzymuje jednostkę i NIE zmienia kierunku patrzenia.
+ * Zamiar ruchu jednostki: `vel`, `moving` i `facing` z kierunku.
+ * `dir: null` (albo zerowa prędkość) zatrzymuje jednostkę i NIE zmienia kierunku patrzenia.
+ * Wydzielone, bo tego samego potrzebuje `chopping.ts`, gdy komenda `move` przerywa akcję.
  */
+export function setMoveIntent(unit: Unit, dir: Dir8 | null): void {
+  if (dir === null || unit.speed <= 0) {
+    unit.vel.x = 0;
+    unit.vel.y = 0;
+    unit.moving = false;
+    return;
+  }
+  const v = DIR_VECTORS[dir];
+  unit.vel.x = v.x * unit.speed;
+  unit.vel.y = v.y * unit.speed;
+  unit.moving = true;
+  // Facing zmienia się tylko przy niezerowym ruchu.
+  unit.facing = dir;
+}
+
+/** Komendy `move` -> `vel`, `facing`, `moving`. */
 export function applyMoveCommands(world: World, commands: Command[]): void {
   for (const cmd of commands) {
     if (cmd.type !== 'move') continue;
     const unit = unitById(world, cmd.unitId);
     if (!unit) continue;
-    if (cmd.dir === null || unit.speed <= 0) {
-      unit.vel.x = 0;
-      unit.vel.y = 0;
-      unit.moving = false;
-      continue;
-    }
-    const dir = DIR_VECTORS[cmd.dir];
-    unit.vel.x = dir.x * unit.speed;
-    unit.vel.y = dir.y * unit.speed;
-    unit.moving = true;
-    // Facing zmienia się tylko przy niezerowym ruchu.
-    unit.facing = cmd.dir;
+    setMoveIntent(unit, cmd.dir);
   }
 }
 

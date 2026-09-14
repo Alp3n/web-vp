@@ -3,7 +3,20 @@
  * `src/sim` nie zna Phasera, DOM ani assetów (kontrakt: `docs/architecture.md`).
  */
 
-export type { Dir8, EntityId, RampDir, Rock, TileKind, Tree, Unit, Vec2, World } from './types';
+export type {
+  Building,
+  BuildingKind,
+  Dir8,
+  EntityId,
+  RampDir,
+  Rock,
+  TileKind,
+  Tree,
+  Unit,
+  UnitAction,
+  Vec2,
+  World,
+} from './types';
 export {
   DIAGONAL,
   DIR_E,
@@ -30,6 +43,7 @@ export {
   rockAt,
   tileIndex,
   treeAt,
+  treeById,
   unitById,
 } from './types';
 
@@ -54,7 +68,26 @@ export {
 
 export { cloneWorld, createEmptyWorld, generateWorld, hashWorld } from './world';
 export { step } from './tick';
-export { applyMoveCommands, canStandAt, circleBlocked, moveUnits } from './systems/movement';
+export {
+  applyMoveCommands,
+  canStandAt,
+  circleBlocked,
+  moveUnits,
+  setMoveIntent,
+} from './systems/movement';
+export { applyActionCommands, canChop, nearestChoppableTree, tickChopping } from './systems/chopping';
+export type { PlacementReason, PlacementResult } from './systems/building';
+export {
+  applyBuildCommands,
+  buildingAt,
+  canPlaceBuilding,
+  footprintOf,
+  isKindAvailable,
+  tickConstruction,
+  wallMask,
+  woodCostOf,
+} from './systems/building';
+export { hasTreeInRadius, sawmillProduces, tickEconomy } from './systems/economy';
 export {
   canCross,
   canCrossTerrain,

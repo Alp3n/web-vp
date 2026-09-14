@@ -36,6 +36,8 @@ describe('createEmptyWorld', () => {
     expect(world.trees).toEqual([]);
     expect(world.rocks).toEqual([]);
     expect(world.units).toEqual([]);
+    expect(world.buildings).toEqual([]);
+    expect(world.woodFrac).toBe(0);
     expect(world.elevation.length).toBe(16 * 8);
     expect(world.ramp.length).toBe(16 * 8);
     expect([...world.elevation].every((e) => e === 0)).toBe(true);
@@ -84,6 +86,7 @@ describe('generateWorld', () => {
     for (const tree of world.trees) {
       expect(tree.wood).toBe(BALANCE.trees.woodPerTree);
       expect(tree.state).toBe('full');
+      expect(tree.chops).toBe(0);
       expect(Number.isInteger(tree.x)).toBe(true);
       expect(Number.isInteger(tree.y)).toBe(true);
       expect(ids.has(tree.id)).toBe(false);
@@ -144,6 +147,7 @@ describe('generateWorld', () => {
     expect(unit.speed).toBe(BALANCE.worker.speedTilesPerS);
     expect(unit.moving).toBe(false);
     expect(unit.vel).toEqual({ x: 0, y: 0 });
+    expect(unit.action).toBeNull();
     expect(isBlocked(world, unit.pos.x, unit.pos.y)).toBe(false);
     expect(treeAt(world, unit.pos.x, unit.pos.y)).toBeUndefined();
   });

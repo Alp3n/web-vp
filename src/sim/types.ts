@@ -54,6 +54,8 @@ export interface Tree {
   y: number;
   wood: number;
   state: 'full' | 'chopped' | 'stump';
+  /** Ile razy drzewo zostało nadrąbane (Faza 2). `chops >= trees.chopsToStump` => pień. */
+  chops: number;
 }
 
 /**
@@ -76,6 +78,12 @@ export interface Rock {
   size: 0 | 1;
 }
 
+/**
+ * Akcja jednostki trwająca wiele ticków. `null` = bezczynna.
+ * Faza 2 ma tylko rąbanie; walka i naprawa dołożą kolejne warianty unii.
+ */
+export type UnitAction = null | { type: 'chop'; treeId: EntityId; ticksLeft: number };
+
 export interface Unit {
   id: EntityId;
   kind: 'worker' | 'vampire';
@@ -86,6 +94,25 @@ export interface Unit {
   hp: number;
   maxHp: number;
   speed: number;
+  /** Trwająca akcja (Faza 2: `chop`). Przerywana przez `move` z kierunkiem i przez `cancel`. */
+  action: UnitAction;
+}
+
+export type BuildingKind = 'wall' | 'tower' | 'sawmill' | 'generator';
+
+/** Budynek zajmuje prostokąt `w × h` kafli od lewego-górnego (x, y). */
+export interface Building {
+  id: EntityId;
+  kind: BuildingKind;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  hp: number;
+  maxHp: number;
+  level: number;
+  /** 0 = gotowy. Dopóki > 0, budynek stoi i blokuje, ale nie działa. */
+  buildTicksLeft: number;
 }
 
 export interface World {
@@ -104,7 +131,10 @@ export interface World {
   trees: Tree[];
   rocks: Rock[];
   units: Unit[];
+  buildings: Building[];
   wood: number;
+  /** Ułamek drewna akumulowany przez tartaki; część całkowita przechodzi do `wood`. */
+  woodFrac: number;
   gold: number;
   nextId: EntityId;
   /** Stan mulberry32 (`rngNext`). */
@@ -146,6 +176,14 @@ export function treeAt(world: World, x: number, y: number): Tree | undefined {
   const ty = Math.floor(y);
   for (const tree of world.trees) {
     if (tree.x === tx && tree.y === ty) return tree;
+  }
+  return undefined;
+}
+
+/** Drzewo po id albo `undefined`. */
+export function treeById(world: World, id: EntityId): Tree | undefined {
+  for (const tree of world.trees) {
+    if (tree.id === id) return tree;
   }
   return undefined;
 }
