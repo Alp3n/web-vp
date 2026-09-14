@@ -45,6 +45,7 @@ docs/
 - Symulacja: stały tick 20 Hz. Render interpoluje pozycje między tickami.
 - Grid: mapa 64×64 kafli iso. Kafel to diament 32×16 px (rysowany 1×, kamera zoom 2–3).
 - Budynki: 1×1 (mur, wieża), 2×2 (tartak, generator).
+- Wywyższenia (dodane po playteście Fazy 1): dwa poziomy terenu (0 i 1). Płaskowyże (2–4 na mapę) z klifami, które działają jak ściany. Wejście na płaskowyż tylko rampą o szerokości 2 kafli (min. 1 rampa na płaskowyż). Głazy jako statyczne przeszkody. Reguły w `docs/architecture.md` („Wywyższenia"); wampir w Fazie 3 musi uwzględniać rampy w A*.
 - Wszystko, co zmienia świat, jest komendą. Gracz i AI generują komendy identycznie — to później umożliwi multiplayer bez przepisywania.
 
 ## 3. Sterowanie (pozioma orientacja)
@@ -111,7 +112,7 @@ export const wall_iso = sprite({
 
 ### Lista assetów v1
 
-Kafle: trawa ×3 warianty, ziemia, brzeg wody. Drzewo: pełne / nadrąbane / pień. Robotnik. Wampir. Mur z auto-tilingiem (16 wariantów łączeń). Wieża (2 poziomy). Tartak. Generator. Pocisk wieży. Efekty: uderzenie, dym, ciemna „mgła" przy śmierci (bez krwi). Cień.
+Kafle: trawa ×3 warianty, ziemia, brzeg wody. Teren wywyższony: ściany klifu (S, E), rampy ×4 kierunki, rąbek górnej krawędzi płaskowyżu, głazy ×2. Drzewo: pełne / nadrąbane / pień. Robotnik. Wampir. Mur z auto-tilingiem (16 wariantów łączeń). Wieża (2 poziomy). Tartak. Generator. Pocisk wieży. Efekty: uderzenie, dym, ciemna „mgła" przy śmierci (bez krwi). Cień.
 
 ### SVG (HUD)
 
@@ -133,6 +134,7 @@ Joystick, przyciski, ikony menu radialnego, pasek zasobów, timer, ekrany start/
 - Grid iso, generator mapy z seeda: trawa, skupiska drzew, kilka polan.
 - Kamera, joystick, robotnik chodzi po mapie, kolizje z drzewami.
 - Pierwsze sprite'y: kafle, drzewo, robotnik (4 kierunki, walk).
+- Faza 1b (po playteście): płaskowyże z klifami, rampy 2-kaflowe, głazy — w sim, atlasie i renderze.
 - **DoD**: test w Vitest — 1000 ticków dla tego samego seeda i tych samych komend daje identyczny hash stanu.
 
 ### Faza 2 — Ekonomia i budowanie
