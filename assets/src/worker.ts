@@ -195,3 +195,138 @@ export const worker_idle_sw = flipX(worker_idle_se, 'worker_idle_sw');
 export const worker_idle_nw = flipX(worker_idle_ne, 'worker_idle_nw');
 export const worker_walk_sw = flipX(worker_walk_se, 'worker_walk_sw');
 export const worker_walk_nw = flipX(worker_walk_ne, 'worker_walk_nw');
+
+/**
+ * Rąbanie: trzy klatki zamachu (siekiera nad głową → w bok → w dół).
+ * Tułów zostaje ten sam, co w bezruchu — zmienia się ramię (`s`) i położenie siekiery
+ * (trzonek `w`, ostrze `a`/`A`). Klatka uderzenia ma tułów o 1 px niżej (przysiad).
+ */
+const CHOP_SE: string[][] = [
+  [
+    '..........aa....',
+    '.........aAAa...',
+    '......kKKkaAa...',
+    '.....kKLLKwa....',
+    '....kkKKKKkw....',
+    '.....SssesSw....',
+    '......SssSs.....',
+    '.....TTttuu.....',
+    '....TTttttuu....',
+    '....Ttttttuu....',
+    '....Ttttttuu....',
+    '....Ttttttus....',
+    '....stttttts....',
+    '....bbbbbbbb....',
+    '....Tttttttu....',
+    '....uuuuuuuu....',
+  ],
+  [
+    '................',
+    '................',
+    '......kKKk......',
+    '.....kKLLKk.....',
+    '....kkKKKKkk....',
+    '.....SssesS.....',
+    '......SssS.aa...',
+    '.....TTttuuwAa..',
+    '....TTttttuwaa..',
+    '....Ttttttuu....',
+    '....Ttttttuu....',
+    '....Ttttttus....',
+    '....stttttts....',
+    '....bbbbbbbb....',
+    '....Tttttttu....',
+    '....uuuuuuuu....',
+  ],
+  [
+    '................',
+    '................',
+    '......kKKk......',
+    '.....kKLLKk.....',
+    '....kkKKKKkk....',
+    '.....SssesS.....',
+    '......SssS......',
+    '.....TTttuu.....',
+    '....TTttttuu....',
+    '....Ttttttuu....',
+    '....Ttttttusw...',
+    '....Ttttttus.w..',
+    '....stttttts.aa.',
+    '....bbbbbbbbaAa.',
+    '....Tttttttu.aa.',
+    '....uuuuuuuu....',
+  ],
+];
+
+const CHOP_NE: string[][] = [
+  [
+    '..........aa....',
+    '.........aAAa...',
+    '......kKKkaAa...',
+    '.....kKLLKwa....',
+    '....kkKKKKkw....',
+    '.....kKKKKkw....',
+    '......SSSSs.....',
+    '.....TTttuu.....',
+    '....TTtbbtuu....',
+    '....Ttttbbuu....',
+    '....Tttttbbu....',
+    '....Ttttttus....',
+    '....stttttts....',
+    '....bbbbbbbb....',
+    '....Tttttttu....',
+    '....uuuuuuuu....',
+  ],
+  [
+    '................',
+    '................',
+    '......kKKk......',
+    '.....kKLLKk.....',
+    '....kkKKKKkk....',
+    '.....kKKKKk.....',
+    '......SSSS.aa...',
+    '.....TTttuuwAa..',
+    '....TTtbbtuwaa..',
+    '....Ttttbbuu....',
+    '....Tttttbbu....',
+    '....Ttttttus....',
+    '....stttttts....',
+    '....bbbbbbbb....',
+    '....Tttttttu....',
+    '....uuuuuuuu....',
+  ],
+  [
+    '................',
+    '................',
+    '......kKKk......',
+    '.....kKLLKk.....',
+    '....kkKKKKkk....',
+    '.....kKKKKk.....',
+    '......SSSS......',
+    '.....TTttuu.....',
+    '....TTtbbtuu....',
+    '....Ttttbbuu....',
+    '....Tttttbbsw...',
+    '....Ttttttus.w..',
+    '....stttttts.aa.',
+    '....bbbbbbbbaAa.',
+    '....Tttttttu.aa.',
+    '....uuuuuuuu....',
+  ],
+];
+
+/** Klatka rąbania: własny tułów + nogi w bezruchu; uderzenie z „bujnięciem" w dół. */
+function chopSprite(name: string, bodies: string[][]): SpriteDef {
+  const bob: Array<0 | 1> = [0, 0, 1];
+  return sprite({
+    name,
+    anchor: ANCHOR_FOOT,
+    palette: WORKER_PALETTE,
+    frames: bodies.map((body, i) => pose(body, LEGS_STAND, bob[i]!)),
+  });
+}
+
+export const worker_chop_se = chopSprite('worker_chop_se', CHOP_SE);
+export const worker_chop_ne = chopSprite('worker_chop_ne', CHOP_NE);
+export const worker_chop_sw = flipX(worker_chop_se, 'worker_chop_sw');
+export const worker_chop_nw = flipX(worker_chop_ne, 'worker_chop_nw');

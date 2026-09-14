@@ -14,6 +14,7 @@ import { copyFile, mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
+import { buildHud } from './build-hud.ts';
 import { SPRITES } from '../assets/src/index.ts';
 import { PALETTE_HEX } from '../assets/src/palette.ts';
 import { frameNames, frameToRGBA, type SpriteDef } from '../assets/src/sprite.ts';
@@ -227,8 +228,11 @@ export async function buildAtlas(options: BuildAtlasOptions = {}): Promise<Build
 
 const isMain = process.argv[1] !== undefined && import.meta.url === new URL(`file://${process.argv[1]}`).href;
 if (isMain) {
-  buildAtlas().catch((err: unknown) => {
-    console.error(err);
-    process.exitCode = 1;
-  });
+  // `npm run atlas` buduje OBA atlasy: świat (`atlas.png`) i HUD (`hud.png`).
+  buildAtlas()
+    .then(async () => buildHud())
+    .catch((err: unknown) => {
+      console.error(err);
+      process.exitCode = 1;
+    });
 }

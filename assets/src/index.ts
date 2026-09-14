@@ -24,7 +24,12 @@ import {
   worker_walk_se,
   worker_walk_sw,
   worker_walk_nw,
+  worker_chop_ne,
+  worker_chop_se,
+  worker_chop_sw,
+  worker_chop_nw,
 } from './worker.ts';
+import { fx_chip, fx_hit } from './fx.ts';
 import {
   cliff_s,
   cliff_e,
@@ -37,6 +42,8 @@ import {
   rock_small,
   rock_big,
 } from './terrain.ts';
+import { sawmill, generator, tower_1 } from './buildings.ts';
+import { wall_build, WALL_FRAMES } from './walls.ts';
 import { frameNames, type SpriteDef } from './sprite.ts';
 
 export const SPRITES: Record<string, SpriteDef> = {
@@ -59,6 +66,10 @@ export const SPRITES: Record<string, SpriteDef> = {
   worker_walk_se,
   worker_walk_sw,
   worker_walk_nw,
+  worker_chop_ne,
+  worker_chop_se,
+  worker_chop_sw,
+  worker_chop_nw,
   cliff_s,
   cliff_e,
   ledge_n,
@@ -69,6 +80,13 @@ export const SPRITES: Record<string, SpriteDef> = {
   ramp_w,
   rock_small,
   rock_big,
+  ...Object.fromEntries(WALL_FRAMES.map((def, mask) => [`wall_${mask}`, def])),
+  wall_build,
+  sawmill,
+  generator,
+  tower_1,
+  fx_chip,
+  fx_hit,
   shadow,
   dot,
 };
@@ -81,4 +99,5 @@ export function allFrameNames(): string[] {
 export { PALETTE, PALETTE_HEX } from './palette.ts';
 export { sprite, flipX, frameNames, frameToRGBA, ANCHOR_FOOT, ANCHOR_TILE } from './sprite.ts';
 export { ELEV_PX } from './terrain.ts';
+export { ANCHOR_WALL } from './walls.ts';
 export type { SpriteDef, Anchor } from './sprite.ts';

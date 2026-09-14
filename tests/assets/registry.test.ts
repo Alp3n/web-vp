@@ -21,6 +21,7 @@ const REQUIRED_FRAMES = [
   'tree_stump',
   ...(['ne', 'se', 'sw', 'nw'] as const).flatMap((d) => [`worker_idle_${d}_0`, `worker_idle_${d}_1`]),
   ...(['ne', 'se', 'sw', 'nw'] as const).flatMap((d) => [0, 1, 2, 3].map((i) => `worker_walk_${d}_${i}`)),
+  ...(['ne', 'se', 'sw', 'nw'] as const).flatMap((d) => [0, 1, 2].map((i) => `worker_chop_${d}_${i}`)),
   // teren wywyższony (docs/architecture.md „Wywyższenia (elewacja)")
   'cliff_s',
   'cliff_e',
@@ -29,6 +30,14 @@ const REQUIRED_FRAMES = [
   ...(['n', 'e', 's', 'w'] as const).map((d) => `ramp_${d}`),
   'rock_small',
   'rock_big',
+  // Faza 2: mur z auto-tilingiem, budynki i efekty (docs/architecture.md „Faza 2 — assets")
+  ...Array.from({ length: 16 }, (_, mask) => `wall_${mask}`),
+  'wall_build',
+  'sawmill',
+  'generator',
+  'tower_1',
+  'fx_chip',
+  'fx_hit',
   'shadow',
   'dot',
 ];
@@ -90,12 +99,82 @@ describe('rejestr SPRITES', () => {
     }
   });
 
-  it('robotnik: 16×24, idle 2 klatki, walk 4 klatki, 4 kierunki', () => {
+  it('robotnik: 16×24, idle 2 klatki, walk 4 klatki, chop 3 klatki, 4 kierunki', () => {
     for (const d of ['ne', 'se', 'sw', 'nw']) {
       const idle = SPRITES[`worker_idle_${d}`]!;
       const walk = SPRITES[`worker_walk_${d}`]!;
+      const chop = SPRITES[`worker_chop_${d}`]!;
       expect([d, idle.width, idle.height, idle.frames.length]).toEqual([d, 16, 24, 2]);
       expect([d, walk.width, walk.height, walk.frames.length]).toEqual([d, 16, 24, 4]);
+      expect([d, chop.width, chop.height, chop.frames.length]).toEqual([d, 16, 24, 3]);
+    }
+  });
+
+  it('rąbanie: siekiera wędruje z góry na dół (kolejne klatki mają ostrze coraz niżej)', () => {
+    // ostrze to jedyne piksele `a`/`A` (szarości) w sprite'cie robotnika
+    const bladeRow = (key: string, frame: number): number => {
+      const def = SPRITES[key]!;
+      const rows = def.frames[frame]!.flatMap((row, y) => ([...row].some((c) => c === 'a' || c === 'A') ? [y] : []));
+      expect([key, frame, rows.length]).not.toEqual([key, frame, 0]);
+      return rows.reduce((a, b) => a + b, 0) / rows.length;
+    };
+    for (const d of ['ne', 'se', 'sw', 'nw']) {
+      const key = `worker_chop_${d}`;
+      expect([d, bladeRow(key, 0) < bladeRow(key, 1)]).toEqual([d, true]);
+      expect([d, bladeRow(key, 1) < bladeRow(key, 2)]).toEqual([d, true]);
+    }
+  });
+
+  it('budynki: rozmiary z kontraktu i kotwica w dolnym narożniku footprintu', () => {
+    for (const [key, w, h] of [
+      ['sawmill', 64, 48],
+      ['generator', 64, 48],
+      ['tower_1', 32, 48],
+    ] as const) {
+      const def = SPRITES[key]!;
+      expect([key, def.width, def.height]).toEqual([key, w, h]);
+      expect([key, def.anchor]).toEqual([key, { x: 0.5, y: 1 }]);
+      expect([key, def.frames.length]).toEqual([key, 1]);
+      // budynek stoi na footprincie: najniższy zamalowany wiersz leży tuż nad kotwicą
+      // (bryła jest wpuszczona w footprint, więc nie musi go dotykać co do piksela),
+      // a jego środek ciężkości leży na osi kotwicy (± 1 px)
+      const rows = def.frames[0]!;
+      const lowest = rows.reduce((acc, row, y) => (row.replace(/\./g, '') === '' ? acc : y), -1);
+      expect([key, h - 1 - lowest <= 6]).toEqual([key, true]);
+      // podstawa bryły (dolna 1/3 sprite'a) jest wyśrodkowana na kotwicy — budynek stoi
+      // NAD swoim footprintem, a nie obok niego (tartak jest asymetryczny: chata + stos desek,
+      // więc liczymy środek ciężkości, nie skrajne piksele)
+      let sum = 0;
+      let count = 0;
+      for (let y = Math.floor((h * 2) / 3); y < h; y += 1) {
+        [...rows[y]!].forEach((c, x) => {
+          if (c === '.') return;
+          sum += x + 0.5;
+          count += 1;
+        });
+      }
+      expect([key, count > 0]).toEqual([key, true]);
+      expect([key, Math.abs(sum / count - def.anchor.x * def.width) <= 6]).toEqual([key, true]);
+    }
+  });
+
+  it('budynki mieszczą się w swoim footprincie (2×2 = 64 px, 1×1 = 32 px szerokości)', () => {
+    for (const key of ['sawmill', 'generator', 'tower_1']) {
+      const def = SPRITES[key]!;
+      for (const row of def.frames[0]!) {
+        expect([key, row.length]).toEqual([key, def.width]);
+      }
+    }
+  });
+
+  it('efekty: fx_chip 3×3, fx_hit 8×8, kotwica w środku', () => {
+    for (const [key, size] of [
+      ['fx_chip', 3],
+      ['fx_hit', 8],
+    ] as const) {
+      const def = SPRITES[key]!;
+      expect([key, def.width, def.height]).toEqual([key, size, size]);
+      expect([key, def.anchor]).toEqual([key, { x: 0.5, y: 0.5 }]);
     }
   });
 

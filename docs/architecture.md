@@ -137,14 +137,41 @@ Komendy: `chop {unitId, treeId}`, `build {unitId, building: BuildingKind, x, y}`
 - `hashWorld` obejmuje `buildings`, `woodFrac`, `unit.action`, `tree.chops`.
 - Helpery (czyste, eksport z `src/sim`): `nearestChoppableTree(world, pos, range)`, `canPlaceBuilding(world, unitId, kind, x, y): { ok: boolean; reason?: string }`, `buildingAt(world, x, y)`, `wallMask(world, x, y): number` (bit 1=N, 2=E, 4=S, 8=W: sąsiedni kafel to mur), `footprintOf(kind)`.
 
-### Assets — nowe klatki
-- `wall_0` … `wall_15` — mur 1×1, 32×32 (anchor: dół sprite'a = dolny narożnik diamentu kafla → pivot `{0.5, 1}`, sprite umieszczany w środku kafla + offset 8 px w dół? Ustal w generatorze i zapisz w atlasie jako pivot). Indeks = maska N|E|S|W (1|2|4|8). Słupek kamienny + segmenty do każdej połączonej krawędzi (N: górna-prawa, E: dolna-prawa, S: dolna-lewa, W: górna-lewa).
-- `wall_build` — nakładka/wariant „w budowie" (rusztowanie) 32×32, albo render używa alpha 0.5 + tint (decyzja agenta grafik; zapisz w decisions).
-- `sawmill` — 2×2, 64×48, pivot tak, by dolny narożnik footprintu (kafel (x+1,y+1) dół) był w dolnym środku sprite'a; drewniana chata z piłą/kołem, stos desek.
-- `generator` — 2×2, 64×48 (Faza 4, ale sprite teraz); `tower_1` — 1×1, 32×48 (Faza 4, sprite teraz, drugi poziom później).
-- `worker_chop_{ne,se,sw,nw}` — 3 klatki zamachu siekierą.
-- `fx_chip` — 3×3 wiór (efekt rąbania), `fx_hit` — 8×8 błysk (na później).
-- HUD (SVG → PNG 2× przez sharp, osobny atlas `hud.png`/`hud.json`): `icon_wood`, `icon_axe`, `icon_build`, `icon_wall`, `icon_sawmill`, `icon_tower`, `icon_generator`, `icon_cancel`, `btn_ring` (okrągły przycisk 96 px @2×), `radial_slot`. Źródła w `assets/src/hud/*.svg`.
+### Assets — nowe klatki (Faza 2)
+
+Wszystkie pozycje liczone są z `gridToScreen` (`src/render/iso.ts`) i `pivot` z atlasu, dokładnie
+tak jak w `src/render/terrainPaint.ts`: `left = punkt.x − pivot.x · w`, `top = punkt.y − pivot.y · h`
+(oba przez `Math.round`). Na wywyższeniu dochodzi `top −= elevationAt(...) · ELEV_PX`, jak dla propów.
+
+| klatka | rozmiar | pivot | punkt odniesienia | lewy-górny róg |
+| --- | --- | --- | --- | --- |
+| `wall_0` … `wall_15`, `wall_build` | 32×32 | `{0.5, 0.75}` | środek kafla `gridToScreen(x+0.5, y+0.5)` | `left = X − 16`, `top = Y − 24` |
+| `sawmill`, `generator` (2×2) | 64×48 | `{0.5, 1}` | dolny narożnik footprintu `gridToScreen(x+2, y+2)` | `left = X − 32`, `top = Y − 48` |
+| `tower_1` (1×1) | 32×48 | `{0.5, 1}` | dolny narożnik footprintu `gridToScreen(x+1, y+1)` | `left = X − 16`, `top = Y − 48` |
+| `worker_chop_{ne,se,sw,nw}_{0,1,2}` | 16×24 | `{0.5, 1}` | pozycja jednostki | `left = X − 8`, `top = Y − 24` |
+| `fx_chip` | 3×3 | `{0.5, 0.5}` | punkt cząstki | `left = X − 1.5`, `top = Y − 1.5` |
+| `fx_hit` | 8×8 | `{0.5, 0.5}` | punkt trafienia | `left = X − 4`, `top = Y − 4` |
+
+- **Mur `wall_{maska}`** — indeks = maska `N|E|S|W` = `1|2|4|8` z `wallMask()`. Płótno 32×32:
+  dolne 16 wierszy to dokładnie bounding box diamentu kafla, górne 16 to zapas na wysokość.
+  Pivot `{0.5, 0.75}` = ŚRODEK KAFLA (24. wiersz sprite'a), więc mur pozycjonuje się tak samo
+  jak kafel terenu, tylko z innym pivotem. Geometria: słupek 10 px szerokości i 18 px wysokości
+  w środku kafla + dla każdego bitu segment 6 px szerokości i 14 px wysokości od środka kafla
+  do środka odpowiedniej krawędzi (N = górna-prawa, E = dolna-prawa, S = dolna-lewa, W = górna-lewa).
+  Segment kończy się dokładnie na krawędzi kafla i **nie ma na niej konturu**, więc sąsiednie mury
+  sklejają się w ciągłą ścianę bez szczeliny i bez ciemnej kreski (test: `tests/assets/walls.test.ts`).
+  Kolejność rysowania murów: rosnące `x + y` (nieodzowne — bliższy kafel zamalowuje przekrój dalszego).
+- **`wall_build`** — ten sam słupek jako drewniane rusztowanie (pomost + deski + prześwity),
+  bez segmentów. Render używa go zamiast `wall_{maska}` dla `buildTicksLeft > 0`, z alfą i paskiem
+  postępu; auto-tiling włącza się dopiero po ukończeniu budowy.
+- **Budynki** — bryły iso z kotwicą w dolnym narożniku footprintu (patrz tabela). Bryła jest
+  wpuszczona w footprint (nie dotyka jego krawędzi co do piksela), dzięki czemu 2×2 nie zachodzi
+  na sąsiednie kafle. `depth = depthFor(x + w, y + h)` — ten sam punkt, co kotwica.
+- **HUD** (atlas `hud.png`, rasteryzacja 2×, pivot każdej klatki `{0.5, 0.5}`):
+  `icon_wood`, `icon_axe`, `icon_build`, `icon_wall`, `icon_sawmill`, `icon_tower`, `icon_generator`,
+  `icon_cancel` — 64×64 px w atlasie (32×32 css), `btn_ring` — 192×192 (96×96 css),
+  `radial_slot` — 128×128 (64×64 css). Render skaluje je o 0.5 i rysuje kamerą HUD (bez zoomu).
+  Źródła: `assets/src/hud/*.svg`, build: `scripts/build-hud.ts` (odpalany przez `npm run atlas`).
 
 ### Input / render
 - **Przycisk akcji** (prawa dolna ćwiartka, duży okrąg ~72 px ekranowych): kontekst: w trybie budowy → „postaw"; w zasięgu drzewa (`nearestChoppableTree`) → „rąb" (ikona siekiery); inaczej nieaktywny (przyciemniony).

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!-- siekiera: trzonek po skosie, ostrze doklejone z boku (kanciaste = metal, nie łyżka) -->
+  <g stroke="#181425" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M6 29 L20 9" stroke-width="7.4" fill="none"/>
+    <path d="M6 29 L20 9" stroke="#ead4aa" stroke-width="4" fill="none"/>
+    <path d="M14 15 L20 4 L29 8 Q31 15 26 21 Z" fill="#ead4aa" stroke-width="1.8"/>
+    <path d="M20 7 L24 19" stroke="#181425" stroke-width="1.4" fill="none"/>
+  </g>
+</svg>

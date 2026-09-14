@@ -812,6 +812,248 @@ const rocks = {
   ],
 };
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Mur z auto-tilingiem: `wall_0` … `wall_15` + `wall_build`.
+//
+// Maska: 1 = N (krawędź górna-prawa), 2 = E (dolna-prawa), 4 = S (dolna-lewa),
+// 8 = W (górna-lewa) — dokładnie `wallMask()` z `src/sim` (docs/architecture.md, Faza 2).
+//
+// Mur to bryła wyciągnięta pionowo z prostokątów w przestrzeni kafla (fx, fy):
+//   słupek  — kwadrat w środku kafla (10 px szerokości na ekranie), wysokość WALL_POST_H,
+//   segment — pasek od środka kafla do środka krawędzi (6 px), wysokość WALL_SEG_H.
+// Rzut prostopadłościanu: piksel jest wypełniony, gdy dla pewnego h ∈ [0, H] punkt
+// `invMap(px, py + h)` leży w prostokącie podstawy; widoczna powierzchnia to h = max
+// (wierzch, gdy h = H, inaczej ściana E albo S — ściany N/W są tyłem do kamery).
+//
+// CIĄGŁOŚĆ: segment kończy się dokładnie na krawędzi kafla, a bit maski jest ustawiony
+// tylko wtedy, gdy sąsiad też jest murem — więc przekrój na krawędzi zawsze ma po drugiej
+// stronie bliźniaczy segment. Żeby na styku nie powstał ciemny kontur (ani dziura),
+// sprite jest rasterizowany RAZEM z „duchami" segmentów sąsiadów, a kontur liczony
+// z sumy obu masek; na końcu piksele duchów są kasowane.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const WALL_W = 32;
+const WALL_H = 32;
+/** Wiersz sprite'a = wiersz kafla + WALL_BASE_Y. Dolny narożnik diamentu ląduje w ostatnim wierszu. */
+const WALL_BASE_Y = 16;
+/** Wysokość słupka i segmentu ponad ziemią (px, 1×). */
+const WALL_POST_H = 18;
+const WALL_SEG_H = 14;
+/** Połowa boku podstawy w jednostkach kafla: słupek 10 px szerokości (64·a), segment 6 px (32·w). */
+const WALL_POST_HALF = 5 / 32;
+const WALL_SEG_HALF = 3 / 16;
+/** Wysokość warstwy kamieni (px) — spoiny poziome co tyle, liczone od ziemi w górę. */
+const WALL_COURSE = 5;
+
+type WallBit = 'n' | 'e' | 's' | 'w';
+
+/** Prostokąt podstawy (w jednostkach kafla) wyciągnięty na wysokość `h`. */
+interface WallBox {
+  x0: number;
+  x1: number;
+  y0: number;
+  y1: number;
+  h: number;
+  /** Oś segmentu: wzdłuż fx (mur E–W), wzdłuż fy (mur N–S) albo słupek. */
+  axis: 'x' | 'y' | 'post';
+}
+
+const WALL_POST_BOX: WallBox = {
+  x0: 0.5 - WALL_POST_HALF,
+  x1: 0.5 + WALL_POST_HALF,
+  y0: 0.5 - WALL_POST_HALF,
+  y1: 0.5 + WALL_POST_HALF,
+  h: WALL_POST_H,
+  axis: 'post',
+};
+
+/** Segment od środka kafla do środka krawędzi `bit`; `ghost` = ta sama połówka po drugiej stronie krawędzi. */
+function wallSegBox(bit: WallBit, ghost: boolean): WallBox {
+  const w = WALL_SEG_HALF;
+  const near = ghost ? 1 : 0.5;
+  const far = ghost ? 1.5 : 1;
+  switch (bit) {
+    case 'n':
+      return { x0: 0.5 - w, x1: 0.5 + w, y0: 1 - far, y1: 1 - near, h: WALL_SEG_H, axis: 'y' };
+    case 's':
+      return { x0: 0.5 - w, x1: 0.5 + w, y0: near, y1: far, h: WALL_SEG_H, axis: 'y' };
+    case 'e':
+      return { x0: near, x1: far, y0: 0.5 - w, y1: 0.5 + w, h: WALL_SEG_H, axis: 'x' };
+    default:
+      return { x0: 1 - far, x1: 1 - near, y0: 0.5 - w, y1: 0.5 + w, h: WALL_SEG_H, axis: 'x' };
+  }
+}
+
+/** Piksel (w układzie kafla) → punkt podstawy, na który patrzy kamera. Odwrotność rzutu iso. */
+function wallInvMap(cx: number, cy: number): { fx: number; fy: number } {
+  return { fx: (cx - 16) / 32 + cy / 16, fy: cy / 16 - (cx - 16) / 32 };
+}
+
+interface WallSurface {
+  /** Wysokość widocznej powierzchni nad ziemią. */
+  z: number;
+  fx: number;
+  fy: number;
+  face: 'top' | 's' | 'e';
+  box: WallBox;
+}
+
+/**
+ * Najbliższa kamerze powierzchnia bryły w tym pikselu, albo `null`.
+ * Rzut pionowego graniastosłupa = suma podstawy przesuniętej o h ∈ [0, H] w górę ekranu,
+ * a widać powierzchnię o największym h (im wyżej, tym bliżej kamery).
+ */
+function wallHit(box: WallBox, cx: number, cy: number): WallSurface | null {
+  const { fx, fy } = wallInvMap(cx, cy);
+  const lo = Math.max(0, 16 * (box.x0 - fx), 16 * (box.y0 - fy));
+  let hi = box.h;
+  let face: 'top' | 's' | 'e' = 'top';
+  const hE = 16 * (box.x1 - fx);
+  const hS = 16 * (box.y1 - fy);
+  if (hE < hi) {
+    hi = hE;
+    face = 'e';
+  }
+  if (hS < hi) {
+    hi = hS;
+    face = 's';
+  }
+  if (lo > hi) return null;
+  return { z: hi, fx: fx + hi / 16, fy: fy + hi / 16, face, box };
+}
+
+/**
+ * Kamienny wzór: poziome spoiny co `WALL_COURSE` px (liczone od ziemi, więc słupek i segmenty
+ * mają je na tej samej wysokości) i pionowe spoiny co ćwierć kafla, przesunięte co drugą warstwę.
+ * Litery: L = światło wierzchu, g = baza wierzchu i ściany S, s = spoina S i baza ściany E,
+ * d = spoina ściany E.
+ */
+function wallChar(hit: WallSurface): string {
+  const course = Math.floor(hit.z / WALL_COURSE);
+  const t = hit.face === 'e' ? hit.fy : hit.fx;
+  const along = hit.box.axis === 'x' ? hit.fx : hit.fy;
+  const brick = (u: number, stagger: boolean): boolean => {
+    const v = u * 4 + (stagger ? 0.5 : 0);
+    return Math.abs(v - Math.round(v)) < 0.13;
+  };
+  if (hit.face === 'top') {
+    // wierzch: poprzeczne spoiny wzdłuż osi muru; słupek dostaje własny, gęstszy rytm
+    const joint = hit.box.axis === 'post' ? brick(hit.fx, false) || brick(hit.fy, false) : brick(along, false);
+    return joint ? 'g' : 'L';
+  }
+  const joint = Math.floor(hit.z) % WALL_COURSE === WALL_COURSE - 1 || brick(t, course % 2 === 1);
+  if (hit.face === 's') return joint ? 's' : 'g';
+  return joint ? 'd' : 's';
+}
+
+/** Wypełnia siatkę bryłami w kolejności malarskiej (od najdalszej do najbliższej kamery). */
+function wallPaint(boxes: WallBox[], grid: (string | null)[][], ox: number, oy: number): void {
+  const order = [...boxes].sort((a, b) => a.x1 + a.y1 - (b.x1 + b.y1));
+  for (let row = 0; row < grid.length; row += 1) {
+    for (let col = 0; col < grid[row]!.length; col += 1) {
+      const cx = col - ox + 0.5;
+      const cy = row - oy + 0.5;
+      for (const box of order) {
+        const hit = wallHit(box, cx, cy);
+        if (hit !== null) grid[row]![col] = wallChar(hit);
+      }
+    }
+  }
+}
+
+/** Margines rasteryzacji: duchy sąsiadów wychodzą poza sprite, a kontur liczymy z nich. */
+const WALL_PAD = 12;
+
+function wallGrid(mask: number): string[] {
+  const bits: Array<[number, WallBit]> = [
+    [1, 'n'],
+    [2, 'e'],
+    [4, 's'],
+    [8, 'w'],
+  ];
+  const own: WallBox[] = [WALL_POST_BOX];
+  const ghosts: WallBox[] = [];
+  for (const [bit, dir] of bits) {
+    if ((mask & bit) === 0) continue;
+    own.push(wallSegBox(dir, false));
+    ghosts.push(wallSegBox(dir, true));
+  }
+
+  const H = WALL_H + 2 * WALL_PAD;
+  const W = WALL_W + 2 * WALL_PAD;
+  const blank = (): (string | null)[][] =>
+    Array.from({ length: H }, () => new Array<string | null>(W).fill(null));
+
+  // maska „wszystko" (mur + duchy sąsiadów) — po niej liczymy kontur, żeby na styku kafli go nie było
+  const all = blank();
+  wallPaint([...ghosts, ...own], all, WALL_PAD, WALL_PAD + WALL_BASE_Y);
+  // maska własna — tylko ta, co trafi do sprite'a
+  const mine = blank();
+  wallPaint(own, mine, WALL_PAD, WALL_PAD + WALL_BASE_Y);
+
+  const rows: string[] = [];
+  for (let sy = 0; sy < WALL_H; sy += 1) {
+    let row = '';
+    for (let sx = 0; sx < WALL_W; sx += 1) {
+      const r = sy + WALL_PAD;
+      const c = sx + WALL_PAD;
+      const ch = mine[r]![c];
+      if (ch === null) {
+        row += '.';
+        continue;
+      }
+      const edge =
+        all[r - 1]![c] === null || all[r + 1]![c] === null || all[r]![c - 1] === null || all[r]![c + 1] === null;
+      row += edge ? 'o' : ch;
+    }
+    rows.push(row);
+  }
+  return rows;
+}
+
+/**
+ * `wall_build` — ten sam słupek, ale jako drewniane rusztowanie: pełny pomost na górze,
+ * dwie deski niżej i pionowe słupki w narożnikach, między nimi prześwity (render dokłada alfę).
+ * Bez segmentów: mur w budowie nie łączy się jeszcze z sąsiadami.
+ */
+function wallBuildGrid(): string[] {
+  const H = WALL_H + 2 * WALL_PAD;
+  const W = WALL_W + 2 * WALL_PAD;
+  const grid: (string | null)[][] = Array.from({ length: H }, () => new Array<string | null>(W).fill(null));
+  const box = WALL_POST_BOX;
+  for (let row = 0; row < H; row += 1) {
+    for (let col = 0; col < W; col += 1) {
+      const cx = col - WALL_PAD + 0.5;
+      const cy = row - (WALL_PAD + WALL_BASE_Y) + 0.5;
+      const hit = wallHit(box, cx, cy);
+      if (hit === null) continue;
+      if (hit.face === 'top') {
+        grid[row]![col] = 'T';
+        continue;
+      }
+      const t = hit.face === 'e' ? hit.fy : hit.fx;
+      const end = Math.min(Math.abs(t - (box.x0 + 0)), Math.abs(t - box.x1)) < 0.035;
+      const plank = hit.z % 6 < 3.2;
+      if (!end && !plank) continue;
+      grid[row]![col] = hit.face === 's' ? (plank && !end ? 'l' : 'b') : plank && !end ? 'b' : 'o';
+    }
+  }
+  const rows: string[] = [];
+  for (let sy = 0; sy < WALL_H; sy += 1) {
+    let row = '';
+    for (let sx = 0; sx < WALL_W; sx += 1) {
+      row += grid[sy + WALL_PAD]![sx + WALL_PAD] ?? '.';
+    }
+    rows.push(row);
+  }
+  return rows;
+}
+
+const walls: Record<string, string[]> = {};
+for (let mask = 0; mask < 16; mask += 1) walls[`wall_${mask}`] = wallGrid(mask);
+walls['wall_build'] = wallBuildGrid();
+
 const terrainFile = `/**
  * WYGENEROWANE przez \`npx tsx scripts/gen-grids.ts\` — edytuj generator, nie ten plik.
  *
@@ -1007,7 +1249,89 @@ ${quote(rocks.rock_small)}
 });
 `;
 
+
+const wallsFile = `/**
+ * WYGENEROWANE przez \`npx tsx scripts/gen-grids.ts\` — edytuj generator, nie ten plik.
+ *
+ * Mur z auto-tilingiem (docs/architecture.md, Faza 2): \`wall_0\` … \`wall_15\`, indeks = maska
+ * N|E|S|W (1|2|4|8) sąsiednich murów. N = krawędź górna-prawa kafla, E = dolna-prawa,
+ * S = dolna-lewa, W = górna-lewa.
+ *
+ * Płótno ${WALL_W}×${WALL_H}: dolne 16 wierszy to dokładnie bounding box diamentu kafla,
+ * górne ${WALL_BASE_Y} to zapas na wysokość muru. Kotwica (pivot) = ŚRODEK KAFLA, czyli
+ * \`{ x: 0.5, y: ${WALL_BASE_Y + 8} / ${WALL_H} }\` = { 0.5, ${((WALL_BASE_Y + 8) / WALL_H).toFixed(4)} }:
+ *   left = screenX(środek kafla) − 16
+ *   top  = screenY(środek kafla) − ${WALL_BASE_Y + 8}
+ * (na wywyższeniu jeszcze \`− elevation × ELEV_PX\`, jak wszystkie propy).
+ *
+ * Geometria: słupek ${WALL_POST_H} px nad ziemią, podstawa ${(64 * WALL_POST_HALF).toFixed(0)} px szerokości na ekranie;
+ * segment do środka krawędzi — ${WALL_SEG_H} px wysokości, ${(32 * WALL_SEG_HALF).toFixed(0)} px szerokości.
+ * Segment kończy się DOKŁADNIE na krawędzi kafla, a kontur na styku jest pominięty
+ * (liczony z sumy muru i „duchów" sąsiadów), więc sąsiednie kafle sklejają się w ciągłą ścianę
+ * — pilnuje tego \`tests/assets/walls.test.ts\`.
+ */
+import { PALETTE } from './palette.ts';
+import { sprite, type Anchor, type SpriteDef } from './sprite.ts';
+
+/** Środek kafla leży ${WALL_BASE_Y + 8} px od góry sprite'a (8 px nad dolną krawędzią diamentu). */
+export const ANCHOR_WALL: Anchor = { x: 0.5, y: ${WALL_BASE_Y + 8} / ${WALL_H} };
+
+/**
+ * Kamień: L = światło wierzchu, g = baza wierzchu / ściana S, s = spoina S / baza ściany E,
+ * d = spoina ściany E, o = kontur. Ściana S (zwrócona w +gy, ekranowo dół-lewo) jest jaśniejsza
+ * od E (+gx, dół-prawo) — to ta sama reguła światła, co w ścianach klifu.
+ *
+ * Kontur to \`navy\`, nie \`darkSlate\`: \`darkSlate\` jest już spoiną ściany E, a kontur musi być
+ * o krok ciemniejszy od najciemniejszej ściany — inaczej sylwetka muru ginie na tle ściany E
+ * i nie da się odróżnić fugi od szwu między kaflami (patrz \`tests/assets/walls.test.ts\`).
+ */
+const STONE = {
+  L: PALETTE.lightGrey,
+  g: PALETTE.grey,
+  s: PALETTE.slate,
+  d: PALETTE.darkSlate,
+  o: PALETTE.navy,
+};
+
+/** Rusztowanie: T = pomost, l = deska oświetlona, b = deska w cieniu, o = słupek/kontur. */
+const SCAFFOLD = {
+  T: PALETTE.tan,
+  l: PALETTE.leather,
+  b: PALETTE.brown,
+  o: PALETTE.darkBrown,
+};
+${Array.from({ length: 16 }, (_, mask) => `
+export const wall_${mask}: SpriteDef = sprite({
+  name: 'wall_${mask}',
+  anchor: ANCHOR_WALL,
+  palette: STONE,
+  frames: [
+    [
+${quote(walls[`wall_${mask}`]!)}
+    ],
+  ],
+});`).join('\n')}
+
+/** Mur w budowie: drewniane rusztowanie bez segmentów (render używa go z alfą). */
+export const wall_build: SpriteDef = sprite({
+  name: 'wall_build',
+  anchor: ANCHOR_WALL,
+  palette: SCAFFOLD,
+  frames: [
+    [
+${quote(walls['wall_build']!)}
+    ],
+  ],
+});
+
+/** \`wall_0\` … \`wall_15\` w kolejności maski — indeks = N|E|S|W (1|2|4|8). */
+export const WALL_FRAMES: readonly SpriteDef[] = [
+${Array.from({ length: 16 }, (_, m) => `  wall_${m},`).join('\n')}
+];
+`;
+
 await writeFile(join(SRC_DIR, 'tiles.ts'), tilesFile, 'utf8');
 await writeFile(join(SRC_DIR, 'nature.ts'), natureFile, 'utf8');
 await writeFile(join(SRC_DIR, 'terrain.ts'), terrainFile, 'utf8');
-console.log('gen-grids: assets/src/tiles.ts, assets/src/nature.ts, assets/src/terrain.ts');
+await writeFile(join(SRC_DIR, 'walls.ts'), wallsFile, 'utf8');
+console.log('gen-grids: assets/src/tiles.ts, assets/src/nature.ts, assets/src/terrain.ts, assets/src/walls.ts');

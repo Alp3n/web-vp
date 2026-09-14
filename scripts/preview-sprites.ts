@@ -13,6 +13,7 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildAtlas, type AtlasFrame } from './build-atlas.ts';
+import { buildHud } from './build-hud.ts';
 import { PALETTE } from '../assets/src/palette.ts';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -193,8 +194,100 @@ function rampScene(up: UpDir): Cell[][] {
   return cells;
 }
 
+/** Podpis maski muru: które krawędzie są połączone. */
+function maskLabel(mask: number): string {
+  const bits: Array<[number, string]> = [
+    [1, 'N'],
+    [2, 'E'],
+    [4, 'S'],
+    [8, 'W'],
+  ];
+  const on = bits.filter(([b]) => (mask & b) !== 0).map(([, n]) => n);
+  return on.length === 0 ? '—' : on.join('');
+}
+
+/** Siatka 4×4 wszystkich masek muru, z podpisem maski i jej bitów. */
+function wallMaskGrid(ctx: Ctx): string {
+  const cells: string[] = [];
+  for (let mask = 0; mask < 16; mask += 1) {
+    cells.push(`<figure class="cell">
+  <div class="checker"><i class="spr" style="${spriteStyle(ctx, `wall_${mask}`, ZOOM)}"></i></div>
+  <figcaption>wall_${mask}<br><small>${maskLabel(mask)}</small></figcaption>
+</figure>`);
+  }
+  return `<div class="grid grid16">${cells.join('\n')}</div>`;
+}
+
+/**
+ * Scenka „Baza": pełny kwadrat 5×5 murów (auto-tiling liczony tak jak `wallMask()` w sim),
+ * tartak w środku, generator i wieża obok, robotnik przy rąbaniu.
+ *
+ * Uwaga na konwencję podglądu: `gridToScreen(gx, gy)` jest tu ŚRODKIEM kafla (gx, gy),
+ * więc dolny narożnik footprintu budynku w×h w kaflu (x, y) to `(x + w - 0.5, y + h - 0.5)`.
+ */
+function baseScene(ctx: Ctx, zoom: number, ox: number, oy: number): string {
+  const size = 9;
+  const g = ['tile_grass0', 'tile_grass1', 'tile_grass2'];
+  const tiles: string[][] = Array.from({ length: size }, (_, gy) =>
+    Array.from({ length: size }, (_, gx) => g[(gx * 2 + gy) % 3]!),
+  );
+
+  const ring = new Set<string>();
+  for (let i = 0; i < 5; i += 1) {
+    ring.add(`${1 + i},1`);
+    ring.add(`${1 + i},5`);
+    ring.add(`1,${1 + i}`);
+    ring.add(`5,${1 + i}`);
+  }
+
+  const props: Placed[] = [];
+  for (const key of ring) {
+    const [x, y] = key.split(',').map(Number) as [number, number];
+    let mask = 0;
+    if (ring.has(`${x},${y - 1}`)) mask += 1;
+    if (ring.has(`${x + 1},${y}`)) mask += 2;
+    if (ring.has(`${x},${y + 1}`)) mask += 4;
+    if (ring.has(`${x - 1},${y}`)) mask += 8;
+    props.push({ name: `wall_${mask}`, gx: x, gy: y });
+  }
+  // tartak 2×2 na kaflach (2,2)-(3,3) → dolny narożnik footprintu = (3.5, 3.5)
+  props.push({ name: 'sawmill', gx: 3.5, gy: 3.5 });
+  // mur w budowie tuż przed ścianą S (tak wygląda kafel z `buildTicksLeft > 0`)
+  props.push({ name: 'wall_build', gx: 3, gy: 6 });
+  // robotnik rąbie drzewo PRZED murem — inaczej zasłania go ściana (mur jest bliżej kamery)
+  props.push({ name: 'shadow', gx: 6.4, gy: 3.4 });
+  props.push({ name: 'worker_chop_se_2', gx: 6.4, gy: 3.4 });
+  props.push({ name: 'fx_chip', gx: 6.9, gy: 3.1 });
+  props.push({ name: 'tree_full', gx: 7.6, gy: 2 });
+  props.push({ name: 'tree_chopped', gx: 8, gy: 2.8 });
+  // generator 2×2 na (6,5)-(7,6) i wieża 1×1 na (7,0)
+  props.push({ name: 'generator', gx: 7.5, gy: 6.5 });
+  props.push({ name: 'tower_1', gx: 0.5, gy: 7.5 });
+
+  props.sort((a, b) => a.gx + a.gy - (b.gx + b.gy));
+  return scene(ctx, tiles, props, zoom, ox, oy);
+}
+
+/** Kafelek HUD: ikona z drugiego atlasu (`hud.png`), rysowana w 1× albo 2×. */
+function hudCell(hud: Ctx, name: string, cssScale: number): string {
+  const f = hud.frames[name];
+  if (!f) throw new Error(`preview: brak klatki HUD "${name}"`);
+  const w = (f.frame.w / 2) * cssScale;
+  const h = (f.frame.h / 2) * cssScale;
+  const style = [
+    `width:${w}px`,
+    `height:${h}px`,
+    `background-position:${(-f.frame.x * cssScale) / 2}px ${(-f.frame.y * cssScale) / 2}px`,
+    `background-size:${(hud.atlasW * cssScale) / 2}px ${(hud.atlasH * cssScale) / 2}px`,
+  ].join(';');
+  return `<figure class="cell"><div class="hudbox"><i class="spr hud" style="${style}"></i></div>
+<figcaption>${name}<br><small>${f.sourceSize.w / 2}×${f.sourceSize.h / 2} css · ${cssScale}×</small></figcaption></figure>`;
+}
+
 async function main(): Promise<void> {
   const atlas = await buildAtlas();
+  const hudAtlas = await buildHud();
+  const hud: Ctx = { frames: hudAtlas.json.frames, atlasW: hudAtlas.width, atlasH: hudAtlas.height };
   const ctx: Ctx = { frames: atlas.json.frames, atlasW: atlas.width, atlasH: atlas.height };
   const names = Object.keys(ctx.frames).sort();
 
@@ -205,6 +298,10 @@ async function main(): Promise<void> {
     ['robotnik — walk', (n) => n.startsWith('worker_walk_')],
     ['klify, rąbki i rampy', (n) => n.startsWith('cliff_') || n.startsWith('ledge_') || n.startsWith('ramp_')],
     ['głazy', (n) => n.startsWith('rock_')],
+    ['robotnik — chop', (n) => n.startsWith('worker_chop_')],
+    ['mur', (n) => n.startsWith('wall_')],
+    ['budynki', (n) => n === 'sawmill' || n === 'generator' || n === 'tower_1'],
+    ['efekty', (n) => n.startsWith('fx_')],
     [
       'reszta',
       (n) =>
@@ -214,7 +311,12 @@ async function main(): Promise<void> {
         !n.startsWith('cliff_') &&
         !n.startsWith('ledge_') &&
         !n.startsWith('ramp_') &&
-        !n.startsWith('rock_'),
+        !n.startsWith('rock_') &&
+        !n.startsWith('wall_') &&
+        !n.startsWith('fx_') &&
+        n !== 'sawmill' &&
+        n !== 'generator' &&
+        n !== 'tower_1',
     ],
   ];
 
@@ -287,6 +389,12 @@ async function main(): Promise<void> {
   .abs { position:absolute; }
   .stage { position:relative; background:#05060c; border:1px solid #2c3050; border-radius:6px;
            margin:0 0 12px; overflow:hidden; }
+  .grid16 { display:grid; grid-template-columns:repeat(4, max-content); gap:10px; }
+  .hud { background-image:url(hud.png); image-rendering:auto; }
+  .hudbox { display:inline-flex; align-items:center; justify-content:center; padding:10px;
+            min-width:72px; min-height:72px; border:1px solid #2c3050; border-radius:6px;
+            background:#20351f; }
+  [hidden] { display:none !important; }
 </style>
 </head>
 <body>
@@ -335,6 +443,38 @@ ${['tree_full', 'tree_chopped', 'tree_stump']
   .join('\n')}
 </div>
 
+<section data-section="mury">
+<h2>mury — 16 masek (indeks = N|E|S|W = 1|2|4|8)</h2>
+<p class="meta">pivot ${ctx.frames['wall_0']!.pivot.x},${ctx.frames['wall_0']!.pivot.y} = środek kafla · left = screenX − 16, top = screenY − 24</p>
+${wallMaskGrid(ctx)}
+</section>
+
+<section data-section="baza">
+<h2>scenka „Baza" — pełny kwadrat 5×5 murów, tartak w środku, generator, wieża, rąbiący robotnik</h2>
+<p class="meta">maski liczone jak <code>wallMask()</code> w sim · budynki kotwiczone w dolnym narożniku footprintu</p>
+<div class="stage" style="width:1216px;height:820px">
+${baseScene(ctx, 4, 144, 62)}
+</div>
+<div class="stage" style="width:1700px;height:1220px">
+${baseScene(ctx, 6, 142, 62)}
+</div>
+</section>
+
+<section data-section="hud">
+<h2>HUD — drugi atlas (SVG → 2×), na ciemnym tle</h2>
+<p class="meta">hud.png ${hudAtlas.width}×${hudAtlas.height} · ${hudAtlas.frameCount} klatek · rasteryzacja 2×, wyświetlane 1× i 2×</p>
+<div class="grid">
+${['icon_wood', 'icon_axe', 'icon_build', 'icon_wall', 'icon_sawmill', 'icon_tower', 'icon_generator', 'icon_cancel', 'btn_ring', 'radial_slot']
+  .map((n) => hudCell(hud, n, 1))
+  .join('\n')}
+</div>
+<div class="grid">
+${['icon_wood', 'icon_axe', 'icon_build', 'icon_wall', 'icon_sawmill', 'icon_tower', 'icon_generator', 'icon_cancel', 'btn_ring', 'radial_slot']
+  .map((n) => hudCell(hud, n, 2))
+  .join('\n')}
+</div>
+</section>
+
 <h2>składanie — mapa iso 4×4 (gridToScreen, pivot z atlasu)</h2>
 <div class="stage" style="width:640px;height:400px">
 ${scene(ctx, map, props, ZOOM, 80, 40)}
@@ -344,6 +484,18 @@ ${scene(ctx, map, props, ZOOM, 80, 40)}
 <div class="stage" style="width:980px;height:500px">
 ${scene(ctx, seamMap, [], 6, 80, 10)}
 </div>
+<script>
+  // ?section=mury|baza|hud — zostawia na stronie tylko jedną sekcję (do zrzutów ekranu)
+  const want = new URLSearchParams(location.search).get('section');
+  if (want) {
+    for (const el of document.querySelectorAll('section[data-section]')) {
+      el.hidden = el.dataset.section !== want;
+    }
+    for (const el of document.querySelectorAll('body > h2, body > .grid, body > .stage, body > .palette, body > .meta, body > h1')) {
+      el.hidden = true;
+    }
+  }
+</script>
 </body>
 </html>
 `;

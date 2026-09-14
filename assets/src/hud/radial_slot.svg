@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- slot menu radialnego: zaokrąglony kwadrat -->
+  <rect x="5" y="5" width="54" height="54" rx="14" fill="#181425" fill-opacity="0.5"/>
+  <rect x="5" y="5" width="54" height="54" rx="14" fill="none" stroke="#ead4aa" stroke-width="3"/>
+</svg>

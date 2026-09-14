@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!-- tartak: chata z dachem + tarcza piły -->
+  <g fill="#ead4aa" stroke="#181425" stroke-width="1.6" stroke-linejoin="round">
+    <path d="M4 14 L14 5 L24 14 Z"/>
+    <rect x="6" y="14" width="16" height="13" rx="1.5"/>
+    <circle cx="23" cy="22" r="6.5"/>
+    <circle cx="23" cy="22" r="2" fill="#181425" stroke="none"/>
+  </g>
+</svg>

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!-- młotek: prosty obuch w poprzek pionowego trzonka (nie do pomylenia z siekierą) -->
+  <g fill="#ead4aa" stroke="#181425" stroke-width="1.8" stroke-linejoin="round">
+    <rect x="4" y="5" width="24" height="9" rx="2.5"/>
+    <rect x="13" y="14" width="6" height="14" rx="2"/>
+  </g>
+</svg>

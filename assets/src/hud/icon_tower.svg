@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!-- wieża: blanki, trzon, strzelnica -->
+  <g fill="#ead4aa" stroke="#181425" stroke-width="1.6" stroke-linejoin="round">
+    <path d="M7 10 L7 5 L11 5 L11 8 L14 8 L14 5 L18 5 L18 8 L21 8 L21 5 L25 5 L25 10 Z"/>
+    <path d="M8 10 L24 10 L22 28 L10 28 Z"/>
+    <rect x="14" y="15" width="4" height="7" rx="2" fill="#181425" stroke="none"/>
+  </g>
+</svg>

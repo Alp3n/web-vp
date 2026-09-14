@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!-- stos drewna: dwie kłody, na przedniej słoje -->
+  <g fill="#ead4aa" stroke="#181425" stroke-width="1.6" stroke-linejoin="round">
+    <rect x="3" y="6" width="26" height="9" rx="4.5"/>
+    <rect x="3" y="17" width="26" height="9" rx="4.5"/>
+    <circle cx="9" cy="10.5" r="2.4" fill="none"/>
+    <circle cx="9" cy="21.5" r="2.4" fill="none"/>
+  </g>
+</svg>

@@ -349,3 +349,149 @@ włos grubości 1 px, rampa to wstęga 11 px z ciemnym konturem.
 **Nie ma cienia u podnóża ścian S/E.** Sprawdzone na zrzutach: ściany S/E i tak czytają się dobrze
 (mają własny kontur `black`), a dodatkowy pas przyciemnienia na kaflu niżej wymagałby piątej klatki
 i kolejnej reguły w `paintTile`. Problem był wyłącznie po stronie N/W.
+
+## 2026-09-14 — Faza 2 w symulacji: rąbanie, budowanie, tartak
+
+Wszystko zgodnie z sekcją „Faza 2 — ekonomia i budowanie (kontrakt)" w `docs/architecture.md`.
+Poniżej rzeczy, których kontrakt nie rozstrzygał, oraz jedno świadome odstępstwo.
+
+**Pieńki nie blokują, nadrąbane drzewa tak.** `chops == 1` → `chopped` (kafel dalej zablokowany),
+`chops >= trees.chopsToStump` → `stump` i `blocked = 0`. To jedyne miejsce w symulacji, w którym
+kafel przestaje blokować w trakcie rundy, więc pieniek jest jednocześnie nagrodą (skrót przez las)
+i sygnałem dla gracza, że drzewo jest wyczerpane. Render ma tu tylko zmienić klatkę.
+
+**Przerwanie akcji jest w jednym miejscu: `applyActionCommands` (`systems/chopping.ts`).**
+`movement.ts` nic nie wie o akcjach; dostał za to wydzielony `setMoveIntent(unit, dir)`, z którego
+korzysta zarówno `applyMoveCommands`, jak i przerwanie rąbania. W `tick.ts` kolejność to
+`applyMoveCommands` → `applyActionCommands` → `applyBuildCommands`, dzięki czemu przy kilku
+komendach dla tej samej jednostki w jednym ticku **wygrywa ostatnia komenda w tablicy**:
+`chop` po `move` zeruje prędkość, `move` po `chop` kasuje akcję i przywraca ruch.
+`move` z `dir: null` (puszczony joystick) świadomie NIE przerywa rąbania — inaczej rąbanie byłoby
+niemożliwe do utrzymania na mobile.
+
+**Budowa nie wymaga robotnika przy budynku.** `buildTicksLeft--` co tick, niezależnie od tego, gdzie
+jest robotnik i co robi (kontrakt). Konsekwencja: da się postawić mur i od razu uciec — to celowe,
+bo drag-to-build ma stawiać ciągi murów w biegu, a ucieczka przed wampirem jest sednem gry.
+Budynek w budowie ma pełne HP, blokuje kafle, ale nie działa (tartak nie produkuje).
+
+**Tartak liczy drzewa raz na sekundę, nie co tick — i wtedy dopisuje całą sekundę produkcji.**
+To odstępstwo od litery kontraktu („co tick `woodFrac += woodPerSecond / TICK_RATE`"): tempo jest
+identyczne (2 drewna/s), ale drewno dochodzi porcjami co `TICK_RATE` ticków zamiast po 0,1.
+Powód: predykat „czy w promieniu 6 kafli jest drzewo" to przejście po ~600 drzewach na budynek;
+co tick to praca na marne. Cache per budynek odpada, bo musiałby żyć poza `World` (moduł), a wtedy
+`cloneWorld` dawałby świat z innym cache i determinizm by się posypał; trzymanie flagi w `Building`
+byłoby zmianą kontraktu typu. Wybrane rozwiązanie nie wymaga żadnego dodatkowego stanu.
+`woodFrac` zostaje w `World` i w hashu — przyda się, gdy ulepszenia dadzą ułamkowe tempo.
+
+**`canPlaceBuilding` nie alokuje.** Jest wołane przy każdym ruchu palca w trybie budowy (~60×/s),
+więc wyniki to zamrożone stałe modułu: jeden obiekt `{ok:true}` i po jednym na każdy powód.
+Sprawdzenia idą po kaflach footprintu (max 2×2) i po jednostkach — bez tablic pośrednich.
+Kolejność warunków = kolejność z kontraktu, pierwszy niespełniony daje `reason`; przy footprincie,
+który jest jednocześnie rampą i mieszaną elewacją, zobaczysz `rampa`. Brak jednostki o podanym id
+daje `poza zasięgiem` (nie ma kto budować).
+
+**Zasięg budowy liczony do środków kafli footprintu.** „Odległość do najbliższego kafla" z kontraktu
+rozstrzygnięta jako odległość środka jednostki do środka najbliższego kafla footprintu; przy
+`rangeTiles = 5` daje to zasięg mniej więcej pięciu kafli w pionie i poziomie i ~3,5 na skos.
+
+**Hash stanu rozszerzony (`tests/determinism.test.ts` — nowe przypięte wartości).**
+Doszły `woodFrac`, `tree.chops`, `unit.action` (kod typu, id celu, `ticksLeft`) i cała lista
+`buildings`, w jawnej kolejności pól. Snapshoty: `hashWorld(generateWorld(42))` = `d1522955`
+(było `788ea845`), a po 1000 tickach skryptu = `f20e6dcd` (było `0b025216`). Skrypt testowy
+dostał rąbanie i stawianie murów (przez `nearestChoppableTree` i `canPlaceBuilding`) oraz zapas
+200 drewna na start — bez zapasu 1000 ticków nie starcza na pierwszy mur i ścieżka budowania nie
+byłaby w ogóle sprawdzana. Osobny test pilnuje, że skrypt naprawdę rąbie i buduje.
+
+## 2026-09-14 — Faza 2: mur z auto-tilingiem (geometria, pivot, ciągłość)
+
+**Mur to bryła, nie obrazek.** `wall_0`…`wall_15` powstają w `scripts/gen-grids.ts` przez rzutowanie
+prostopadłościanów wyciągniętych z prostokątów w przestrzeni kafla `(fx, fy)`: słupek 10 × 18 px
+w środku kafla + dla każdego bitu maski segment 6 px szerokości i 14 px wysokości od środka kafla
+do środka krawędzi. Piksel jest zamalowany, gdy dla pewnego `h ∈ [0, H]` punkt `invMap(px, py + h)`
+leży w podstawie; widać powierzchnię o największym `h` (wierzch, gdy `h == H`, inaczej ściana E albo S).
+Ściany N/W są tyłem do kamery i nigdy się nie rysują — ta sama reguła, co w `cliff_*`.
+
+**Pivot `{0.5, 0.75}` zamiast „środek kafla na dole sprite'a".** Zadanie mówiło, żeby środek kafla
+wypadł w ostatnim wierszu sprite'a. Tak się nie da: segmenty S i E schodzą 4–5 px **poniżej** środka
+kafla (dobijają do środków dolnych krawędzi diamentu), więc pivot na samym dole ucinałby im stopy
+i robił szczelinę dokładnie tam, gdzie mur ma się łączyć z sąsiadem. Płótno jest więc 32×32, dolne
+16 wierszy to bounding box diamentu kafla, a pivot leży w środku kafla, czyli w 24. wierszu
+(`24/32 = 0.75`). Pozycjonowanie: `left = screenX(środek kafla) − 16`, `top = screenY − 24`.
+
+**Ciągłość: kontur liczony z „duchami" sąsiadów.** Bit maski jest ustawiony tylko wtedy, gdy sąsiad
+też jest murem, więc przekrój na krawędzi ZAWSZE ma kontynuację po drugiej stronie. Gdyby każdy
+sprite dostał pełny kontur po swojej sylwetce, na każdej granicy kafli pojawiłaby się ciemna kreska
+(a sam przekrój — gdyby konturu nie było — zostałby dziurą, bo ściana N/W sąsiada jest niewidoczna).
+Rozwiązanie: sprite jest rasteryzowany dwa razy — raz sam, raz razem z „duchami" segmentów sąsiadów
+— a kontur dostają tylko te piksele, które sąsiadują z przezroczystością w masce ŁĄCZNEJ. Piksele
+duchów są potem kasowane. Efekt: mury sklejają się w jedną ścianę, co pilnuje
+`tests/assets/walls.test.ts` (przekrój na krawędzi w całości zamalowany, brak konturu w środku
+ściany, 4-spójność prostego muru i pełnego kwadratu 5×5).
+
+**Kontur `navy`, nie `darkSlate`.** Kontrakt zadania mówił `darkSlate`, ale `darkSlate` jest już
+spoiną ściany E. Kontur musi być o krok ciemniejszy od najciemniejszej ściany, inaczej sylwetka
+muru ginie i nie da się (ani okiem, ani testem) odróżnić fugi od szwu między kaflami. Drabina:
+wierzch `lightGrey`/`grey`, ściana S `grey`/`slate`, ściana E `slate`/`darkSlate`, kontur `navy`.
+Ściana S jaśniejsza od E — to samo światło z góry-lewej, co w klifach.
+
+**Kolejność rysowania murów ma znaczenie.** Przekrój na granicy kafli jest zamalowany przez sprite
+BLIŻSZY kamerze; render musi rysować mury po rosnącym `x + y` (czyli po `depthFor(x+1, y+1)`).
+Przy odwrotnej kolejności na styku zostałaby widoczna ścianka czołowa dalszego kafla.
+
+**`wall_build` = jedna klatka rusztowania.** Mur w budowie to ten sam słupek, ale z desek
+(`tan`/`leather`/`brown`, kontur `darkBrown`) z poziomymi prześwitami i pionowymi słupkami
+w narożnikach — bez segmentów, bo niedokończony mur jeszcze się z niczym nie łączy. Render używa
+go z alfą i paskiem postępu; auto-tiling włącza się dopiero po `buildTicksLeft == 0`.
+
+## 2026-09-14 — Faza 2: budynki (tartak, generator, wieża)
+
+**Kotwica = dolny narożnik footprintu.** Wszystkie trzy mają `anchor {0.5, 1}`, a punktem
+odniesienia jest punkt siatki `(x + w, y + h)` — dokładnie ten sam, z którego liczy się `depth`
+(`depthFor(x + w, y + h)`). Dzięki temu pozycja i kolejność rysowania biorą się z jednej liczby,
+a render nie potrzebuje tabel offsetów per budynek (pełna tabela w `docs/architecture.md`).
+
+**Bryła jest wpuszczona w footprint.** Budynek 2×2 w płótnie 64×48 nie może wypełnić diamentu
+footprintu (64 × 32 px) i mieć jeszcze wysokości — zostałoby 16 px na ściany i dach. Podstawy są
+więc mniejsze od footprintu (tartak: chata 46 px szerokości + stos desek i koło piły, generator:
+cokół 32 px), a bryła stoi kilka pikseli nad dolnym narożnikiem. Zyskujemy na tym miejsce na dach
+i to, że 2×2 nie zachodzi na sąsiednie kafle. Test w `tests/assets/registry.test.ts` sprawdza
+rozmiary, kotwicę i to, że środek ciężkości podstawy leży na osi kotwicy (± 6 px — tartak jest
+asymetryczny: chata z lewej, stos desek z prawej).
+
+**Rysowane ręcznie, ale sylwetki brył z rusztowania.** `assets/src/buildings.ts` to zwykłe siatki
+znaków, edytowalne ręcznie i będące jedynym źródłem prawdy. Pierwsza wersja sylwetek (prostopadłościany
+iso, dach czterospadowy, fugi kamienia, deski) powstała w jednorazowym skrypcie roboczym poza repo —
+rysowanie 64×48 linii iso 2:1 na piechotę kończy się przekrzywionymi krawędziami. Wszystkie detale
+(wrota, strzelnice, blanki, koło piły, stos desek, cewka, kryształ, świecący właz) są dorysowane
+ręcznie na tej siatce. Gdyby bryła miała się zmienić, prościej jest przerysować ją ręcznie niż
+odtwarzać skrypt — dlatego nie trafił on do `scripts/`.
+
+**Kontur budynków: `black`, nie `darkSlate`.** Budynki są duże i mają stać w kadrze jak drzewa
+i głazy (te też mają kontur `black`/`darkBrown`). Mur ma jaśniejszy kontur (`navy`), bo jest
+powtarzalnym kafelkiem — czarna siatka co 32 px robiłaby z placu kratownicę.
+
+**Generator: kamień + miedź + kryształ.** Cokół kamienny (ta sama drabina szarości co mur),
+na nim trzy miedziane zwoje (`amber`/`clay`) nawinięte na ciemny rdzeń, w nich kryształ
+(`cyan`/`white`/`darkBlue`). Pierwsza wersja miała pierścienie jako pełne elipsy jedna na drugiej —
+wyglądało to jak tort, bo nie było widać rdzenia. Zwoje mają teraz 2 px i przerwy, przez które widać
+ciemny rdzeń. Cyjan pojawia się też jako świecący właz na ścianie cokołu — inaczej bryła była
+„kamiennym pudłem z ozdobą na górze".
+
+## 2026-09-14 — Faza 2: HUD jako DRUGI atlas (`hud.png`)
+
+PLAN §6 chce HUD w SVG rasteryzowanym „do 2×", a atlas świata jest pixel artem 1× ładowanym
+z `pixelArt: true`. To dwa różne filtrowania tej samej tekstury, więc HUD dostał własny atlas:
+`assets/src/hud/*.svg` → `scripts/build-hud.ts` → `assets/build/hud.png` + `hud.json`
+(ten sam format „JSON Hash", `meta.scale = "2"`, pivot każdej klatki `{0.5, 0.5}`).
+Ikony mają 32×32 viewBox (64 px w atlasie), `btn_ring` 96 (192 px), `radial_slot` 64 (128 px);
+render skaluje je o 0.5 i rysuje kamerą HUD bez zoomu.
+
+`npm run atlas` buduje OBA atlasy — `scripts/build-atlas.ts` w trybie „main" woła `buildHud()`.
+Świadomie bez zmiany `package.json`: jeden skrypt = jedno wejście, a `preview-sprites.ts` i testy
+wołają `buildAtlas()` / `buildHud()` bezpośrednio. `publicDir = assets/build` kopiuje oba atlasy
+do builda bez dodatkowej konfiguracji Vite.
+
+Kolory ikon: `cream` z konturem `black` (stroke 1.6–1.8 w jednostkach viewBoxa), czyli dalej
+Endesga 32 — pilnuje tego `tests/assets/hud.test.ts`, który parsuje SVG i odrzuca kolor spoza palety.
+Przyciski (`btn_ring`, `radial_slot`) to jedyne klatki z alfą (`fill-opacity` 0.35 i 0.5) — mają
+przyciemniać grę pod spodem, a nie ją zasłaniać.
