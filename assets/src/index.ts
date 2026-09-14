@@ -16,6 +16,16 @@ import {
   worker_walk_sw,
   worker_walk_nw,
 } from './worker.ts';
+import {
+  cliff_s,
+  cliff_e,
+  ramp_n,
+  ramp_e,
+  ramp_s,
+  ramp_w,
+  rock_small,
+  rock_big,
+} from './terrain.ts';
 import { frameNames, type SpriteDef } from './sprite.ts';
 
 export const SPRITES: Record<string, SpriteDef> = {
@@ -35,6 +45,14 @@ export const SPRITES: Record<string, SpriteDef> = {
   worker_walk_se,
   worker_walk_sw,
   worker_walk_nw,
+  cliff_s,
+  cliff_e,
+  ramp_n,
+  ramp_e,
+  ramp_s,
+  ramp_w,
+  rock_small,
+  rock_big,
   shadow,
   dot,
 };
@@ -46,4 +64,5 @@ export function allFrameNames(): string[] {
 
 export { PALETTE, PALETTE_HEX } from './palette.ts';
 export { sprite, flipX, frameNames, frameToRGBA, ANCHOR_FOOT, ANCHOR_TILE } from './sprite.ts';
+export { ELEV_PX } from './terrain.ts';
 export type { SpriteDef, Anchor } from './sprite.ts';

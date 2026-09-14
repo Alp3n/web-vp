@@ -18,9 +18,17 @@ const REQUIRED_FRAMES = [
   'tree_stump',
   ...(['ne', 'se', 'sw', 'nw'] as const).flatMap((d) => [`worker_idle_${d}_0`, `worker_idle_${d}_1`]),
   ...(['ne', 'se', 'sw', 'nw'] as const).flatMap((d) => [0, 1, 2, 3].map((i) => `worker_walk_${d}_${i}`)),
+  // teren wywyższony (docs/architecture.md „Wywyższenia (elewacja)")
+  'cliff_s',
+  'cliff_e',
+  ...(['n', 'e', 's', 'w'] as const).map((d) => `ramp_${d}`),
+  'rock_small',
+  'rock_big',
   'shadow',
   'dot',
 ];
+
+const ELEV_PX = 10; // == ELEV_PX z src/sim/balance.ts i assets/src/terrain.ts
 
 describe('rejestr SPRITES', () => {
   const names = allFrameNames();
@@ -91,6 +99,95 @@ describe('rejestr SPRITES', () => {
       for (const frame of def.frames) {
         expect([key, frame[def.height - 1]!.replace(/\./g, '')]).not.toEqual([key, '']);
       }
+    }
+  });
+
+  it('klify: 16×(8+ELEV_PX), pivot prawy/lewy brzeg w dolnym narożniku kafla', () => {
+    for (const [key, x] of [
+      ['cliff_s', 1],
+      ['cliff_e', 0],
+    ] as const) {
+      const def = SPRITES[key]!;
+      expect([key, def.width, def.height]).toEqual([key, 16, 8 + ELEV_PX]);
+      expect([key, def.anchor]).toEqual([key, { x, y: ELEV_PX / (8 + ELEV_PX) }]);
+      expect(def.frames).toHaveLength(1);
+    }
+  });
+
+  it('cliff_e ma bryłę lustrzaną do cliff_s (inne są tylko odcienie skały)', () => {
+    const mask = (key: string): string[] =>
+      SPRITES[key]!.frames[0]!.map((r) => [...r].map((c) => (c === '.' ? '.' : '#')).join(''));
+    expect(mask('cliff_e').map((r) => [...r].reverse().join(''))).toEqual(mask('cliff_s'));
+  });
+
+  it('ściana klifu ma w każdej kolumnie dokładnie ELEV_PX pikseli (równoległobok bez dziur)', () => {
+    for (const key of ['cliff_s', 'cliff_e']) {
+      const def = SPRITES[key]!;
+      for (let x = 0; x < def.width; x += 1) {
+        const column = def.frames[0]!.map((row) => row[x]!);
+        const filled = column.flatMap((c, y) => (c === '.' ? [] : [y]));
+        expect([key, x, filled.length]).toEqual([key, x, ELEV_PX]);
+        // ciągły słup: bez przerw
+        expect([key, x, filled[filled.length - 1]! - filled[0]!]).toEqual([key, x, ELEV_PX - 1]);
+      }
+    }
+  });
+
+  it('ściana S jest jaśniejsza od ściany E (światło z góry-lewej)', () => {
+    const lum = (hex: string): number =>
+      Number.parseInt(hex.slice(1, 3), 16) * 0.3 +
+      Number.parseInt(hex.slice(3, 5), 16) * 0.59 +
+      Number.parseInt(hex.slice(5, 7), 16) * 0.11;
+    const avg = (key: string): number => {
+      const def = SPRITES[key]!;
+      const hexes = def.frames[0]!.flatMap((row) =>
+        [...row].flatMap((c) => {
+          const hex = def.palette[c];
+          return hex === null || hex === undefined ? [] : [hex];
+        }),
+      );
+      return hexes.reduce((a, h) => a + lum(h), 0) / hexes.length;
+    };
+    expect(avg('cliff_s')).toBeGreaterThan(avg('cliff_e'));
+  });
+
+  it('rampy: 32×(16+ELEV_PX), pivot {0.5, (8+ELEV_PX)/(16+ELEV_PX)}', () => {
+    for (const d of ['n', 'e', 's', 'w']) {
+      const key = `ramp_${d}`;
+      const def = SPRITES[key]!;
+      expect([key, def.width, def.height]).toEqual([key, 32, 16 + ELEV_PX]);
+      expect([key, def.anchor]).toEqual([key, { x: 0.5, y: (8 + ELEV_PX) / (16 + ELEV_PX) }]);
+    }
+  });
+
+  it('rampa pokrywa cały diament kafla (brak dziur na styku poziomów)', () => {
+    // diament w układzie sprite'a rampy: przesunięty w dół o ELEV_PX
+    const inDiamond = (x: number, y: number): boolean =>
+      Math.abs(x - 15.5) / 16 + Math.abs(y - ELEV_PX - 7.5) / 8 <= 1;
+    for (const d of ['n', 'e', 's', 'w']) {
+      const frame = SPRITES[`ramp_${d}`]!.frames[0]!;
+      for (let y = 0; y < frame.length; y += 1) {
+        for (let x = 0; x < 32; x += 1) {
+          if (!inDiamond(x, y)) continue;
+          expect([d, x, y, frame[y]![x] !== '.']).toEqual([d, x, y, true]);
+        }
+      }
+    }
+  });
+
+  it('głazy: kotwica u podstawy, baza wyśrodkowana na kotwicy', () => {
+    for (const [key, w, h] of [
+      ['rock_small', 12, 10],
+      ['rock_big', 20, 16],
+    ] as const) {
+      const def = SPRITES[key]!;
+      expect([key, def.width, def.height]).toEqual([key, w, h]);
+      expect([key, def.anchor]).toEqual([key, { x: 0.5, y: 1 }]);
+      const lastRow = def.frames[0]![def.height - 1]!;
+      const xs = [...lastRow].flatMap((c, i) => (c === '.' ? [] : [i]));
+      expect(xs.length).toBeGreaterThan(0);
+      const centre = (Math.min(...xs) + Math.max(...xs) + 1) / 2;
+      expect([key, Math.abs(centre - def.anchor.x * def.width) <= 0.5]).toEqual([key, true]);
     }
   });
 

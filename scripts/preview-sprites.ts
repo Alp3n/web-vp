@@ -77,6 +77,107 @@ function scene(ctx: Ctx, tiles: string[][], props: Placed[], zoom: number, origi
   return parts.join('\n');
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Scenka terenu wywyższonego — WZORZEC dla `src/render`.
+//
+// Kolejność malowania (docs/architecture.md): rosnące `gx + gy`, w rzędzie rosnące `gx`.
+// Dla kafla: najpierw ściany klifu (sąsiad S / E niżej i nie jest rampą prowadzącą tutaj),
+// potem wierzch przesunięty o `-elev * ELEV_PX`. Rampa zastępuje wierzch własnym sprite'em.
+// ─────────────────────────────────────────────────────────────────────────────
+const ELEV_PX = 10; // == ELEV_PX z src/sim/balance.ts i assets/src/terrain.ts
+
+type UpDir = 'n' | 'e' | 's' | 'w';
+
+interface Cell {
+  tile: string;
+  /** 0 = ziemia, 1 = płaskowyż. Kafel rampy ma poziom DOLNY. */
+  elev: number;
+  /** Kierunek „pod górę" w przestrzeni siatki; sąsiad w tę stronę jest o 1 wyżej. */
+  ramp?: UpDir;
+}
+
+function terrainScene(ctx: Ctx, cells: Cell[][], props: Placed[], zoom: number, ox: number, oy: number): string {
+  const parts: string[] = [];
+  const h = cells.length;
+  const w = cells[0]!.length;
+  const at = (gx: number, gy: number): Cell =>
+    gx < 0 || gy < 0 || gx >= w || gy >= h ? { tile: 'tile_grass0', elev: 0 } : cells[gy]![gx]!;
+
+  const put = (name: string, gx: number, gy: number, dy: number, bias: number): void => {
+    const f = ctx.frames[name];
+    if (!f) throw new Error(`preview: brak klatki "${name}"`);
+    const p = gridToScreen(gx, gy);
+    const left = (ox + p.x - f.pivot.x * f.frame.w) * zoom;
+    const top = (oy + p.y + dy - f.pivot.y * f.frame.h) * zoom;
+    parts.push(
+      `<i class="spr abs" style="${spriteStyle(ctx, name, zoom)};left:${left}px;top:${top}px;z-index:${Math.round((gx + gy) * 100) + bias}"></i>`,
+    );
+  };
+
+  for (let sum = 0; sum <= w + h - 2; sum += 1) {
+    for (let gx = 0; gx < w; gx += 1) {
+      const gy = sum - gx;
+      if (gy < 0 || gy >= h) continue;
+      const c = at(gx, gy);
+      if (c.ramp !== undefined) {
+        put(`ramp_${c.ramp}`, gx, gy, -c.elev * ELEV_PX, -50);
+        continue;
+      }
+      const south = at(gx, gy + 1);
+      const east = at(gx + 1, gy);
+      // rampa „prowadzi na ten kafel", gdy jej kierunek pod górę celuje w nas i różni się o 1 poziom
+      const leadsHere = (n: Cell, dir: UpDir): boolean => n.ramp === dir && n.elev + 1 === c.elev;
+      if (south.elev < c.elev && !leadsHere(south, 'n')) put('cliff_s', gx, gy, -(c.elev - 1) * ELEV_PX, -60);
+      if (east.elev < c.elev && !leadsHere(east, 'w')) put('cliff_e', gx, gy, -(c.elev - 1) * ELEV_PX, -60);
+      put(c.tile, gx, gy, -c.elev * ELEV_PX, -50);
+    }
+  }
+  for (const p of props) {
+    const dy = -at(p.gx, p.gy).elev * ELEV_PX;
+    put(p.name, p.gx, p.gy, dy, p.name === 'shadow' ? -1 : 0);
+  }
+  return parts.join('\n');
+}
+
+/** Płaskowyż 3×3 (poziom 1) z 2-kaflową rampą `ramp_n` od strony S, głazami i drzewem. */
+function plateauScene(): Cell[][] {
+  const g = ['tile_grass0', 'tile_grass1', 'tile_grass2'];
+  const cells: Cell[][] = Array.from({ length: 6 }, (_, gy) =>
+    Array.from({ length: 6 }, (_, gx) => ({ tile: g[(gx * 2 + gy) % 3]!, elev: 0 })),
+  );
+  for (let gy = 1; gy <= 3; gy += 1) {
+    for (let gx = 1; gx <= 3; gx += 1) {
+      cells[gy]![gx] = { tile: g[(gx + gy) % 3]!, elev: 1 };
+    }
+  }
+  // rampa 2-kaflowa pod płaskowyżem: kafle (1,4) i (2,4), pod górę na północ
+  cells[4]![1] = { tile: 'tile_dirt', elev: 0, ramp: 'n' };
+  cells[4]![2] = { tile: 'tile_dirt', elev: 0, ramp: 'n' };
+  return cells;
+}
+
+const PLATEAU_PROPS: Placed[] = [
+  { name: 'tree_full', gx: 2, gy: 1 },
+  { name: 'rock_big', gx: 1, gy: 2 },
+  { name: 'rock_small', gx: 3, gy: 1 },
+  { name: 'rock_big', gx: 4, gy: 4 },
+  { name: 'rock_small', gx: 0, gy: 3 },
+  { name: 'shadow', gx: 2, gy: 3 },
+  { name: 'worker_idle_se_0', gx: 2, gy: 3 },
+  { name: 'tree_chopped', gx: 5, gy: 2 },
+];
+
+/** Cztery kierunki ramp obok siebie — każda wjeżdża na własny kafel płaskowyżu. */
+function rampScene(up: UpDir): Cell[][] {
+  const cells: Cell[][] = Array.from({ length: 3 }, () =>
+    Array.from({ length: 3 }, () => ({ tile: 'tile_grass0', elev: 0 })),
+  );
+  const hi = { n: [1, 0], e: [2, 1], s: [1, 2], w: [0, 1] }[up]!;
+  cells[hi[1]!]![hi[0]!] = { tile: 'tile_grass1', elev: 1 };
+  cells[1]![1] = { tile: 'tile_dirt', elev: 0, ramp: up };
+  return cells;
+}
+
 async function main(): Promise<void> {
   const atlas = await buildAtlas();
   const ctx: Ctx = { frames: atlas.json.frames, atlasW: atlas.width, atlasH: atlas.height };
@@ -87,7 +188,18 @@ async function main(): Promise<void> {
     ['drzewa', (n) => n.startsWith('tree_')],
     ['robotnik — idle', (n) => n.startsWith('worker_idle_')],
     ['robotnik — walk', (n) => n.startsWith('worker_walk_')],
-    ['reszta', (n) => !n.startsWith('tile_') && !n.startsWith('tree_') && !n.startsWith('worker_')],
+    ['klify i rampy', (n) => n.startsWith('cliff_') || n.startsWith('ramp_')],
+    ['głazy', (n) => n.startsWith('rock_')],
+    [
+      'reszta',
+      (n) =>
+        !n.startsWith('tile_') &&
+        !n.startsWith('tree_') &&
+        !n.startsWith('worker_') &&
+        !n.startsWith('cliff_') &&
+        !n.startsWith('ramp_') &&
+        !n.startsWith('rock_'),
+    ],
   ];
 
   const sections = groups
@@ -121,6 +233,8 @@ async function main(): Promise<void> {
   const seamMap: string[][] = Array.from({ length: 5 }, (_, y) =>
     Array.from({ length: 5 }, (_, x) => (x + y) % 2 === 0 ? g[0]! : g[1]!),
   );
+
+  const plateau = plateauScene();
 
   const swatches = Object.entries(PALETTE)
     .map(([name, hex]) => `<i class="sw" style="background:${hex}" title="${name} ${hex}"></i>`)
@@ -163,6 +277,26 @@ async function main(): Promise<void> {
 <h1>Nightfall — podgląd sprite'ów (×${ZOOM})</h1>
 <p class="meta">atlas ${atlas.width}×${atlas.height} · ${atlas.frameCount} klatek · ${atlas.spriteCount} sprite'ów · zajętość ${(atlas.fill * 100).toFixed(1)} %</p>
 <div class="palette">${swatches}</div>
+
+<h2>teren wywyższony — płaskowyż 3×3 + rampa 2-kaflowa (wzorzec dla src/render)</h2>
+<p class="meta">ELEV_PX = ${ELEV_PX} · kolejność: rosnące gx+gy, w rzędzie rosnące gx · dla kafla: ściany, potem wierzch</p>
+<div class="stage" style="width:800px;height:600px">
+${terrainScene(ctx, plateau, PLATEAU_PROPS, 4, 104, 52)}
+</div>
+<div class="stage" style="width:1216px;height:900px">
+${terrainScene(ctx, plateau, PLATEAU_PROPS, 6, 104, 52)}
+</div>
+
+<h2>rampy — cztery kierunki, każda wjeżdża na kafel wyżej (×4)</h2>
+<div class="grid">
+${(['n', 'e', 's', 'w'] as const)
+  .map(
+    (d) =>
+      `<figure class="cell"><div class="stage" style="width:416px;height:272px">${terrainScene(ctx, rampScene(d), [], 4, 52, 20)}</div><figcaption>ramp_${d} — pod górę na ${d.toUpperCase()}</figcaption></figure>`,
+  )
+  .join('\n')}
+</div>
+
 ${sections}
 
 <h2>robotnik ×8 — klatki do oceny czytelności</h2>

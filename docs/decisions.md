@@ -208,3 +208,58 @@ płaskowyżu jest osiągalny ze startu; jeśli nie — generator „otwiera drzw
 przeszkodę (drzewo/głaz) na najkrótszej drodze i powtarza (limit 64). Alternatywa (obniżanie
 odciętych fragmentów) robiła dziury w wierzchowinie. Sprawdzone na 300 seedach: 0 naruszeń
 (2–4 płaskowyże, każdy z rampą, 0 nieosiągalnych kafli, głazy 20–40).
+
+## 2026-09-14 — Teren wywyższony: geometria klifów, ramp i głazów (`assets/src/terrain.ts`)
+
+**ELEV_PX = 10, zduplikowane świadomie.** `assets/src` i `scripts` nie importują z `src/`, więc
+`scripts/gen-grids.ts` i `assets/src/terrain.ts` mają własną stałą `ELEV_PX = 10` z komentarzem,
+że musi być równa `ELEV_PX` z `src/sim/balance.ts`. Pilnuje tego `tests/assets/registry.test.ts`
+(trzecia kopia) — zmiana wysokości klifu ma paść w testach, a nie cicho rozjechać render.
+
+**Które ściany istnieją.** Kamera patrzy od (−gx, −gy), więc widoczne są tylko ściany **S**
+(krawędź dolna-lewa diamentu) i **E** (dolna-prawa). Ściany N/W zasłania sam blok, więc ich nie ma
+w atlasie. `cliff_corner` **pominięty**: `cliff_s` zajmuje kolumny 0..15 kafla, `cliff_e` 16..31,
+stykają się w dolnym narożniku bez szczeliny (test: każda kolumna ma dokładnie ELEV_PX pikseli).
+
+**Ściany leżą WEWNĄTRZ nieprzesuniętego diamentu.** Sprite ściany rozciąga się od krawędzi wierzchu
+podniesionego o ELEV_PX **w dół** do krawędzi na poziomie gruntu — czyli nad dolnymi krawędziami
+diamentu, nie pod nimi (`docs/architecture.md`: „Ściany leżą wewnątrz nieprzesuniętego diamentu
+kafla"). Gdyby leżały pod nimi, kafel S/E rysowany później (rosnące `gx+gy`) zamalowałby je.
+
+**Światło.** Pada z góry-lewej, tak jak w koronie drzewa. Ściana S (normalna w stronę +gy, ekranowo
+dół-lewo) jest **jaśniejsza**, ściana E (normalna +gx, dół-prawo) o jeden odcień **ciemniejsza**:
+S = `slate`/`darkSlate`/`navy` + kontur `black`, E = `darkSlate`/`navy` + kontur `black`.
+Pierwszy rząd pod wierzchem to trawiasty rąbek (`darkGreen` na S, `darkTeal` na E) — przelewa trawę
+płaskowyżu przez krawędź, dzięki czemu klif nie wygląda jak doklejony pasek.
+
+**Głazy z tej samej drabiny wartości co klif.** Pierwsza wersja (`lightGrey`/`grey`/`slate`)
+wyglądała na podglądzie jak kłęby waty, nie jak kamień — na zielonej trawie była o dwa stopnie
+za jasna. Finalnie `grey` (błysk) / `slate` / `darkSlate` / `navy` + kontur `black` i mech
+`darkGreen` u podstawy, czyli dokładnie wartości ścian klifu. Głaz i płaskowyż mają być z tej
+samej skały.
+
+**Rampy: `ramp_e` i `ramp_s` są skrajnie skrócone perspektywicznie.** Wierzch rampy to diament
+ścięty o ELEV_PX na krawędzi „pod górę". Dla ramp wznoszących się OD kamery (`n`, `w`) rzut wierzchu
+ma 416 px, dla wznoszących się W STRONĘ kamery (`e`, `s`) tylko 96 px (diament płaski = 256 px) —
+przy ELEV_PX = 10 i połowie wysokości kafla 8 px powierzchnia jest prawie prostopadła do ekranu.
+Konsekwencje i rozwiązania:
+- wierzch `ramp_e`/`ramp_s` sam **nie pokrywa** własnego kafla, więc `fillBelow()` w generatorze
+  domalowuje resztę diamentu jako ścianę. To nigdy nie jest nadmiarowe: leży wewnątrz własnego
+  diamentu, więc kafel „pod górę" (rysowany później) i tak to zasłania, a bez tego zostawałaby dziura;
+- ścianki ramp są **ziemne** (`leather`/`brown`/`darkBrown` + kontur `black`), a nie skalne jak
+  `cliff_*`. Odstępstwo od pierwotnego pomysłu: `ramp_e`/`ramp_s` w szarościach czytały się jako
+  „kamienny blok z pomarańczową kreską na górze" (screenshot `terrain-v5`), a nie jako podjazd.
+  Brąz spina ściankę z ubitą drogą na wierzchu i odróżnia usypaną rampę od wykutego klifu;
+- pochyłość sama w sobie jest w iso niewidoczna, więc wierzch dostaje **2 stopnie**
+  (3 pasma wysokości): ciemna podstopnica `darkBrown` + rozświetlony nos `clay` nad nią.
+  To jedyny czytelny sygnał „to jest podjazd".
+
+**Bez rąbka na bokach rampy.** Pierwsza wersja rysowała ciemną krawędź na wolnym boku rampy.
+Rampa jest 2-kaflowa, więc ta krawędź trafiała na styk obu kafli i dzieliła podjazd na pół
+(screenshot `terrain-v3`). Usunięte.
+
+**Ścianka boczna zostaje w sprite'cie rampy (bez wariantu „inner").** Obawa, że przy rampie
+2-kaflowej ścianka wewnętrznego kafla będzie widoczna, okazała się nieuzasadniona: wierzch kafla
+sąsiedniego (rysowanego później, bo ma większe `gx+gy`) zawiera wszystkie trzy wierzchołki tego
+klina, więc go zamalowuje. Kontrakt `docs/architecture.md` („sprite rampy zawiera własne ścianki
+boczne") zostaje bez zmian, a atlas bez czterech nadmiarowych klatek.

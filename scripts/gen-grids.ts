@@ -253,6 +253,218 @@ function shadowGrid(): string[] {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Wywyższenia: klify `cliff_s`/`cliff_e`, rampy `ramp_{n|e|s|w}` (+ warianty
+// `_inner` bez ścianki bocznej) — kontrakt docs/architecture.md „Wywyższenia".
+//
+// Układ kafla (te same współrzędne, co maska diamentu 32×16):
+//   T = (16,0) górny narożnik, R = (32,8) prawy, B = (16,16) dolny, L = (0,8) lewy.
+//   Krawędź N (sąsiad gy-1) = T→R (górna-prawa),  E (gx+1) = R→B (dolna-prawa),
+//            S (gy+1)       = B→L (dolna-lewa),   W (gx-1) = L→T (górna-lewa).
+//   Parametry powierzchni: fx rośnie wzdłuż T→R (czyli +gx), fy wzdłuż T→L (+gy);
+//   ekran:  sx = 16 + 16·fx − 16·fy,  sy = 8·fx + 8·fy − ELEV_PX·h(fx,fy).
+//
+// Kamera patrzy z góry-lewej (od −gx,−gy), więc widoczne są wyłącznie ściany
+// S i E; ściany N/W zasłania sam blok. Światło pada z góry-lewej ⇒ ściana S
+// (normalna w stronę +gy, ekranowo dół-lewo) jest JAŚNIEJSZA, ściana E
+// (normalna +gx, ekranowo dół-prawo) o jeden odcień CIEMNIEJSZA.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Wysokość klifu w pikselach 1×. MUSI być równa `ELEV_PX` z `src/sim/balance.ts`
+ * — `assets/src`/`scripts` nie importują z `src/`, więc to świadoma duplikacja.
+ */
+const ELEV_PX = 10;
+
+/** h(fx,fy) = a + b·fx + c·fy — ułamek wysokości powierzchni kafla (0 = ziemia, 1 = poziom wyżej). */
+interface Slope {
+  a: number;
+  b: number;
+  c: number;
+}
+
+/** Kafel płaski na górnym poziomie: h ≡ 1 (używane do ścian klifu). */
+const FLAT: Slope = { a: 1, b: 0, c: 0 };
+
+/** Rampy: podniesiona jest krawędź „pod górę", przeciwna leży na ziemi. */
+const RAMP_SLOPE = {
+  n: { a: 1, b: 0, c: -1 }, // h = 1 − fy  → podniesione T i R (krawędź N)
+  e: { a: 0, b: 1, c: 0 }, //  h = fx      → podniesione R i B (krawędź E)
+  s: { a: 0, b: 0, c: 1 }, //  h = fy      → podniesione B i L (krawędź S)
+  w: { a: 1, b: -1, c: 0 }, // h = 1 − fx  → podniesione L i T (krawędź W)
+} as const satisfies Record<string, Slope>;
+
+type UpDir = keyof typeof RAMP_SLOPE;
+
+/** Bok, na którym rampa ma widoczną ściankę (jedyny bok zwrócony do kamery i nierówny z ziemią). */
+const RAMP_WALL_SIDE: Record<UpDir, 's' | 'e'> = { n: 'e', e: 's', s: 'e', w: 's' };
+
+const hAt = (s: Slope, fx: number, fy: number): number => s.a + s.b * fx + s.c * fy;
+
+/**
+ * Odwrotność rzutu wierzchu: piksel (cx,cy) w układzie kafla → (fx,fy) albo `null` poza kaflem.
+ * Odwzorowanie jest afiniczne i odwracalne, więc każdy piksel wierzchu ma dokładnie jedno (fx,fy)
+ * — stąd brak dziur i brak podwójnego malowania.
+ */
+function topUV(s: Slope, cx: number, cy: number): { fx: number; fy: number } | null {
+  const p = 8 - ELEV_PX * s.b;
+  const q = 8 - ELEV_PX * s.c;
+  const det = 16 * (p + q);
+  const u = cx - 16;
+  const v = cy + ELEV_PX * s.a;
+  const fx = (q * u + 16 * v) / det;
+  const fy = (-p * u + 16 * v) / det;
+  if (fx < 0 || fx > 1 || fy < 0 || fy > 1) return null;
+  return { fx, fy };
+}
+
+/** Trafienie w ściankę: `d` = głębokość pod krawędzią wierzchu, `max` = wysokość ścianki, `t` = pozycja wzdłuż niej. */
+interface WallHit {
+  d: number;
+  max: number;
+  t: number;
+}
+
+/** Ściana S: pod krawędzią B→L (dolna-lewa), czyli fy = 1. */
+function wallS(s: Slope, cx: number, cy: number): WallHit | null {
+  const fx = cx / 16;
+  if (fx <= 0 || fx >= 1) return null;
+  const max = ELEV_PX * hAt(s, fx, 1);
+  if (max <= 0) return null;
+  const d = cy - (8 * fx + 8 - max);
+  return d > 0 && d <= max ? { d, max, t: fx } : null;
+}
+
+/** Ściana E: pod krawędzią R→B (dolna-prawa), czyli fx = 1. */
+function wallE(s: Slope, cx: number, cy: number): WallHit | null {
+  const fy = (32 - cx) / 16;
+  if (fy <= 0 || fy >= 1) return null;
+  const max = ELEV_PX * hAt(s, 1, fy);
+  if (max <= 0) return null;
+  const d = cy - (8 + 8 * fy - max);
+  return d > 0 && d <= max ? { d, max, t: 1 - fy } : null;
+}
+
+/** Kamienne warstwy od góry ściany w dół: rąbek, jasna ława, baza, ciemniejszy spód, kontur. */
+const CLIFF_STRATA = ['g', 'l', 'b', 'b', 'd', 'b', 'b', 'd', 'd', 'o'];
+
+/** `fringe` = znak pierwszego rzędu tuż pod wierzchem (trawa dla klifu, ubita ziemia dla rampy). */
+function rockChar(hit: WallHit, fringe: string): string {
+  if (hit.d > hit.max - 1) return 'o'; // 1-px ciemny kontur wzdłuż dolnej krawędzi ściany
+  const r = Math.min(Math.floor(hit.d), ELEV_PX - 1);
+  if (r === 0) return fringe;
+  const base = CLIFF_STRATA[r]!;
+  const n = (Math.floor(hit.t * 16) * 7 + r * 13) % 11;
+  if (base === 'b' && n === 0) return 'd';
+  if (base === 'b' && n === 5) return 'l';
+  if (base === 'd' && n === 3) return 'b';
+  return base;
+}
+
+/**
+ * Klif 16×(8+ELEV_PX). Sprite leży WEWNĄTRZ nieprzesuniętego diamentu kafla:
+ * od krawędzi wierzchu podniesionego o ELEV_PX w dół do krawędzi na poziomie gruntu
+ * (docs/architecture.md: „Ściany leżą wewnątrz nieprzesuniętego diamentu kafla").
+ * Lewy-górny róg sprite'a w układzie kafla: S → (0, 8−ELEV_PX), E → (16, 8−ELEV_PX).
+ */
+function cliffGrid(side: 's' | 'e'): string[] {
+  const ox = side === 's' ? 0 : 16;
+  const oy = 8 - ELEV_PX;
+  const rows: string[] = [];
+  for (let sy = 0; sy < 8 + ELEV_PX; sy += 1) {
+    let row = '';
+    for (let sx = 0; sx < 16; sx += 1) {
+      const cx = ox + sx + 0.5;
+      const cy = oy + sy + 0.5;
+      const hit = side === 's' ? wallS(FLAT, cx, cy) : wallE(FLAT, cx, cy);
+      row += hit === null ? '.' : rockChar(hit, 'g');
+    }
+    rows.push(row);
+  }
+  return rows;
+}
+
+/** Wierzch rampy: ubita droga z 1-px podstopnicami co 1/5 wysokości i rozsypanym żwirem. */
+function roadChar(s: Slope, fx: number, fy: number, cx: number, cy: number): string {
+  // Bez rąbka na bokach: rampa jest 2-kaflowa, więc ciemna krawędź dzieliłaby ją na pół.
+  // 3 pasma wysokości -> 2 stopnie: ciemna podstopnica + rozświetlony nos nad nią.
+  // To jedyny czytelny sygnał „to jest podjazd" — sama pochyłość jest w iso prawie niewidoczna.
+  const band = (uv: { fx: number; fy: number } | null): number | null =>
+    uv === null ? null : Math.min(2, Math.floor(hAt(s, uv.fx, uv.fy) * 3));
+  const k = band({ fx, fy });
+  const below = band(topUV(s, cx, cy + 1));
+  if (below !== null && below !== k) return 'n';
+  const above = band(topUV(s, cx, cy - 1));
+  if (above !== null && above !== k) return 'c';
+  const n = (((Math.floor(cx) * 5 + Math.floor(cy) * 3) % 17) + 17) % 17;
+  if (n === 0) return 't';
+  return 'r';
+}
+
+/**
+ * Rampa 32×(16+ELEV_PX). Lewy-górny róg sprite'a w układzie kafla: (0, −ELEV_PX).
+ *
+ * Rampy `e` i `s` wznoszą się W STRONĘ kamery, więc ich wierzch jest skrajnie skrócony
+ * perspektywicznie (96 px rzutu wobec 256 px diamentu przy ELEV_PX = 10) i sam nie pokrywa
+ * całego kafla. Resztę diamentu domalowuje `fillBelow()` jako skałę — to odsłonięta ściana
+ * pod rampą. Nigdy nie jest to nadmiarowe malowanie: leży wewnątrz własnego diamentu kafla,
+ * więc wszystko, co narysowane później (kafel „pod górę"), i tak to zasłania.
+ */
+function rampGrid(up: UpDir): string[] {
+  const s = RAMP_SLOPE[up];
+  const side = RAMP_WALL_SIDE[up];
+  const rows: string[][] = [];
+  for (let sy = 0; sy < 16 + ELEV_PX; sy += 1) {
+    const row: string[] = [];
+    for (let sx = 0; sx < 32; sx += 1) {
+      const cx = sx + 0.5;
+      const cy = sy - ELEV_PX + 0.5;
+      const uv = topUV(s, cx, cy);
+      if (uv !== null) {
+        row.push(roadChar(s, uv.fx, uv.fy, cx, cy));
+        continue;
+      }
+      const hit = side === 's' ? wallS(s, cx, cy) : wallE(s, cx, cy);
+      row.push(hit === null ? '.' : rockChar(hit, 'n'));
+    }
+    rows.push(row);
+  }
+  fillBelow(rows);
+  return rows.map((row) => row.join(''));
+}
+
+/**
+ * Domyka kolumny sprite'a rampy: każdy pusty piksel między już namalowanym pikselem
+ * a dolną krawędzią diamentu kafla dostaje kamień (warstwy liczone od góry, kontur na dole).
+ * Dzięki temu rampa nigdy nie zostawia dziury na styku poziomów.
+ */
+function fillBelow(rows: string[][]): void {
+  const H = rows.length;
+  for (let sx = 0; sx < 32; sx += 1) {
+    let bottom = -1;
+    for (let sy = 0; sy < H; sy += 1) if (inTile(sx, sy - ELEV_PX)) bottom = sy;
+    if (bottom < 0) continue;
+    let solidTop = -1;
+    for (let sy = 0; sy <= bottom; sy += 1) {
+      if (rows[sy]![sx] !== '.') {
+        solidTop = sy;
+        continue;
+      }
+      if (solidTop < 0) continue;
+      rows[sy]![sx] = rockChar({ d: sy - solidTop, max: bottom - solidTop, t: sx / 32 }, 'n');
+    }
+  }
+}
+
+const terrain = {
+  cliff_s: cliffGrid('s'),
+  cliff_e: cliffGrid('e'),
+  ramp_n: rampGrid('n'),
+  ramp_e: rampGrid('e'),
+  ramp_s: rampGrid('s'),
+  ramp_w: rampGrid('w'),
+};
+
 const quote = (rows: string[]): string => rows.map((r) => `      '${r}',`).join('\n');
 
 const tilesFile = `/**
@@ -433,6 +645,193 @@ export const dot: SpriteDef = sprite({
 });
 `;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Głazy — rysowane ręcznie (to nie geometria): nieregularny owal, trzy odcienie
+// szarości, ciemny kontur, przyciemniony spód-prawo (światło z góry-lewej) i mech
+// u podstawy. `sprite()` pilnuje długości wierszy, więc literówka w siatce = błąd builda.
+// ─────────────────────────────────────────────────────────────────────────────
+const rocks = {
+  rock_big: [
+    '......oooo..........',
+    '....oollggoo........',
+    '...ollggssssoo......',
+    '..olgggssssssoo.....',
+    '.olggggsssssssddoo..',
+    '.ogggggssssssssdddo.',
+    'oggggggsssssssdddddo',
+    'ogggggsssssssddddddo',
+    'oggggssssssssddddddo',
+    'ogggsssssssssddddddo',
+    'oogsssssssssdddddddo',
+    '.oossssssssdddddddoo',
+    '..oosssssssdddddoo..',
+    '...ooosssssdddddoo..',
+    '....mmoooooooooo....',
+    '.....mmooooooom.....',
+  ],
+  rock_small: [
+    '...oooo.....',
+    '..ollggo....',
+    '.olgggssso..',
+    'ogggssssddo.',
+    'oggsssssddo.',
+    'ogssssssdddo',
+    '.osssssdddo.',
+    '..oossdddo..',
+    '..mooooooo..',
+    '...moooom...',
+  ],
+};
+
+const terrainFile = `/**
+ * WYGENEROWANE przez \`npx tsx scripts/gen-grids.ts\` — edytuj generator, nie ten plik.
+ *
+ * Teren wywyższony (docs/architecture.md „Wywyższenia (elewacja)"):
+ *  - \`cliff_s\`, \`cliff_e\` — ściany klifu 16×(8+ELEV_PX), leżą WEWNĄTRZ nieprzesuniętego
+ *    diamentu kafla (od krawędzi wierzchu podniesionego o ELEV_PX w dół do gruntu);
+ *  - \`ramp_{n|e|s|w}\` — 32×(16+ELEV_PX): pochyły wierzch + widoczna ścianka boczna;
+ *    \`_inner\` to ten sam wierzch bez ścianki (wewnętrzny kafel rampy 2-kaflowej);
+ *  - \`rock_small\`, \`rock_big\` — głazy, kotwica u podstawy.
+ *
+ * Pozycjonowanie względem \`gridToScreen(gx, gy)\` wynika wprost z \`pivot\` w atlasie:
+ *   cliff_s: left = screenX − 16, top = screenY − ELEV_PX
+ *   cliff_e: left = screenX,      top = screenY − ELEV_PX
+ *   ramp_*:  left = screenX − 16, top = screenY − (8 + ELEV_PX)
+ */
+import { PALETTE } from './palette.ts';
+import { ANCHOR_FOOT, sprite, type Anchor, type SpriteDef } from './sprite.ts';
+
+/** MUSI być równe \`ELEV_PX\` z \`src/sim/balance.ts\` (assets nie importuje z src). */
+export const ELEV_PX = ${ELEV_PX};
+
+/** Wysokość sprite'a ściany klifu i rampy. */
+const CLIFF_H = 8 + ELEV_PX; // ${8 + ELEV_PX}
+const RAMP_H = 16 + ELEV_PX; // ${16 + ELEV_PX}
+
+/** Prawy-dolny narożnik sprite'a siedzi w dolnym narożniku kafla → left = screenX − 16. */
+const ANCHOR_CLIFF_S: Anchor = { x: 1, y: ELEV_PX / CLIFF_H }; // ${(ELEV_PX / (8 + ELEV_PX)).toFixed(6)}
+/** Lustrzanie: lewy brzeg sprite'a w dolnym narożniku kafla → left = screenX. */
+const ANCHOR_CLIFF_E: Anchor = { x: 0, y: ELEV_PX / CLIFF_H };
+/** Dolny (nieprzesunięty) diament rampy pokrywa kafel → top = screenY − (8 + ELEV_PX). */
+const ANCHOR_RAMP: Anchor = { x: 0.5, y: (8 + ELEV_PX) / RAMP_H }; // ${((8 + ELEV_PX) / (16 + ELEV_PX)).toFixed(6)}
+
+/**
+ * Skała ściany S (jaśniejsza — światło z góry-lewej pada na ścianę zwróconą w +gy).
+ * g = trawiasty rąbek pod wierzchem, l = światło, b = baza, d = cień, o = kontur.
+ */
+const ROCK_S = {
+  g: PALETTE.darkGreen,
+  l: PALETTE.slate,
+  b: PALETTE.darkSlate,
+  d: PALETTE.navy,
+  o: PALETTE.black,
+};
+
+/** Skała ściany E — każdy odcień o jeden krok ciemniejszy niż w \`ROCK_S\`. */
+const ROCK_E = {
+  g: PALETTE.darkTeal,
+  l: PALETTE.darkSlate,
+  b: PALETTE.navy,
+  d: PALETTE.navy,
+  o: PALETTE.black,
+};
+
+/**
+ * Ścianki rampy: ubita ZIEMIA, nie skała. Rampa jest usypana, a nie wykuta — brąz odróżnia ją
+ * od szarych klifów i sprawia, że mocno skrócone perspektywicznie \`ramp_e\`/\`ramp_s\`
+ * (wznoszą się w stronę kamery) czytają się jako jeden obiekt z drogą na górze,
+ * a nie jako kamienny blok z pomarańczową kreską. Odstępstwo od „kolory ścianek jak \`cliff_*\`".
+ */
+const RAMP_WALL = {
+  g: PALETTE.brown,
+  l: PALETTE.leather,
+  b: PALETTE.brown,
+  d: PALETTE.darkBrown,
+  o: PALETTE.black,
+};
+
+/** Wierzch rampy: ubita droga. r = baza, c = nos stopnia (światło), t = żwir, n = podstopnica i rąbek. */
+const ROAD = {
+  r: PALETTE.leather,
+  c: PALETTE.clay,
+  t: PALETTE.tan,
+  n: PALETTE.darkBrown,
+};
+
+/**
+ * Głaz: l = błysk, g/s/d = trzy odcienie bryły (światło z góry-lewej), o = kontur, m = mech.
+ * Ta sama drabina wartości co ściany klifu — głaz ma być z tej samej skały co płaskowyż.
+ */
+const ROCK = {
+  l: PALETTE.lightGrey,
+  g: PALETTE.slate,
+  s: PALETTE.darkSlate,
+  d: PALETTE.navy,
+  o: PALETTE.black,
+  m: PALETTE.darkGreen,
+};
+
+export const cliff_s: SpriteDef = sprite({
+  name: 'cliff_s',
+  anchor: ANCHOR_CLIFF_S,
+  palette: ROCK_S,
+  frames: [
+    [
+${quote(terrain.cliff_s)}
+    ],
+  ],
+});
+
+export const cliff_e: SpriteDef = sprite({
+  name: 'cliff_e',
+  anchor: ANCHOR_CLIFF_E,
+  palette: ROCK_E,
+  frames: [
+    [
+${quote(terrain.cliff_e)}
+    ],
+  ],
+});
+${(['n', 'e', 's', 'w'] as const)
+  .map(
+    (d) => `
+export const ramp_${d}: SpriteDef = sprite({
+  name: 'ramp_${d}',
+  anchor: ANCHOR_RAMP,
+  palette: { ...ROAD, ...RAMP_WALL },
+  frames: [
+    [
+${quote(terrain[`ramp_${d}`])}
+    ],
+  ],
+});`,
+  )
+  .join('\n')}
+
+export const rock_big: SpriteDef = sprite({
+  name: 'rock_big',
+  anchor: ANCHOR_FOOT,
+  palette: ROCK,
+  frames: [
+    [
+${quote(rocks.rock_big)}
+    ],
+  ],
+});
+
+export const rock_small: SpriteDef = sprite({
+  name: 'rock_small',
+  anchor: ANCHOR_FOOT,
+  palette: ROCK,
+  frames: [
+    [
+${quote(rocks.rock_small)}
+    ],
+  ],
+});
+`;
+
 await writeFile(join(SRC_DIR, 'tiles.ts'), tilesFile, 'utf8');
 await writeFile(join(SRC_DIR, 'nature.ts'), natureFile, 'utf8');
-console.log('gen-grids: assets/src/tiles.ts, assets/src/nature.ts');
+await writeFile(join(SRC_DIR, 'terrain.ts'), terrainFile, 'utf8');
+console.log('gen-grids: assets/src/tiles.ts, assets/src/nature.ts, assets/src/terrain.ts');
