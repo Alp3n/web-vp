@@ -7,7 +7,7 @@
  */
 
 import type { RampDir, TileKind, World } from '../sim';
-import { ELEV_PX, RAMP_N, RAMP_NONE, RAMP_W, elevationOf, rampOf } from '../sim';
+import { ELEV_PX, RAMP_E, RAMP_N, RAMP_NONE, RAMP_S, RAMP_W, elevationOf, rampOf } from '../sim';
 
 /** `TileKind` -> nazwa klatki w atlasie. */
 export const FALLBACK_TILE_FRAME = 'tile_grass0';
@@ -15,6 +15,19 @@ export const TILE_FRAMES: readonly string[] = [
   'tile_grass0',
   'tile_grass1',
   'tile_grass2',
+  'tile_dirt',
+  'tile_water',
+];
+
+/**
+ * `TileKind` -> wierzch kafla na poziomie ≥ 1. Trawa dostaje wariant o odcień jaśniejszy,
+ * żeby płaskowyż czytał się jako „wyspa" także tam, gdzie krawędź jest poza kadrem;
+ * ziemia i woda zostają bez zmian (nie ma ich na płaskowyżach, a gdyby były — nie kłamią).
+ */
+export const TILE_FRAMES_HI: readonly string[] = [
+  'tile_grass_hi0',
+  'tile_grass_hi1',
+  'tile_grass_hi2',
   'tile_dirt',
   'tile_water',
 ];
@@ -51,8 +64,14 @@ function cliffVisible(world: World, nx: number, ny: number, elev: number, up: Ra
 
 /**
  * Jeden kafel: rampa zastępuje wierzch i nie ma własnych ścian (są w jej sprite'cie),
- * zwykły kafel dostaje najpierw ściany klifu S/E, potem wierzch podniesiony o poziom.
- * Ściany N/W nie istnieją — zasłaniają je kafle rysowane później.
+ * zwykły kafel dostaje najpierw ściany klifu S/E, potem wierzch podniesiony o poziom,
+ * a na końcu rąbki górnych krawędzi N/W.
+ *
+ * Ściany N/W nie istnieją — zasłaniają je kafle rysowane później — więc od strony
+ * górnej-ekranowej płaskowyż nie miał żadnej sylwetki i zlewał się z gruntem za nim.
+ * `ledge_n` / `ledge_w` malują tę sylwetkę (1 px światła + cień) na własnym wierzchu.
+ * Warunek jest ten sam, co dla ściany: sąsiad niżej i nie jest rampą prowadzącą tutaj
+ * (rampa od strony N prowadzi pod górę na S, rampa od strony W — na E).
  */
 export function paintTile(world: World, put: PutFrame, tx: number, ty: number): void {
   const elev = elevationOf(world, tx, ty);
@@ -65,7 +84,11 @@ export function paintTile(world: World, put: PutFrame, tx: number, ty: number): 
   if (cliffVisible(world, tx, ty + 1, elev, RAMP_N)) put('cliff_s', tx, ty, wallDy);
   if (cliffVisible(world, tx + 1, ty, elev, RAMP_W)) put('cliff_e', tx, ty, wallDy);
   const kind = (world.tiles[ty * world.width + tx] ?? 0) as TileKind;
-  put(TILE_FRAMES[kind] ?? FALLBACK_TILE_FRAME, tx, ty, up(elev));
+  const tops = elev > 0 ? TILE_FRAMES_HI : TILE_FRAMES;
+  const topDy = up(elev);
+  put(tops[kind] ?? FALLBACK_TILE_FRAME, tx, ty, topDy);
+  if (cliffVisible(world, tx, ty - 1, elev, RAMP_S)) put('ledge_n', tx, ty, topDy);
+  if (cliffVisible(world, tx - 1, ty, elev, RAMP_E)) put('ledge_w', tx, ty, topDy);
 }
 
 /** Cała mapa w kolejności malarza: rosnące `gx + gy`, w rzędzie rosnące `gx`. */

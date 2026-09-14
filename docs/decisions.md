@@ -297,3 +297,55 @@ kolumna siatki, a kafle są malowane od tyłu do przodu.
 **HUD: `elev X.X`.** Druga linia debugowa pokazuje `elevationAt` pod robotnikiem (ułamek na rampie).
 Bez tego nie da się z samego zrzutu ekranu odróżnić „stoi na płaskowyżu" od „stoi obok niego" —
 krawędzie N i W nie mają ścian, więc płaskowyż od tej strony nie jest widoczny.
+
+## 2026-09-14 — Czytelność płaskowyżu i ramp po playteście renderu (rąbek + jaśniejszy wierzch + podjazd)
+
+Playtest (`elev-b.png`) pokazał dwie dziury w czytelności: (1) rampy `ramp_e`/`ramp_s` czytały się
+jako cienka pomarańczowa kreska, (2) płaskowyż od strony N/W nie miał żadnej sylwetki — ściany tam
+nie istnieją (poprawnie), więc wierzch zlewał się z gruntem za nim.
+
+**Oba warianty naraz: rąbek `ledge_*` ORAZ jaśniejszy wierzch `tile_grass_hi*`.** Nie „jedno albo
+drugie": rąbek mówi „TU kończy się płaskowyż" (działa na krawędzi), jaśniejszy kafel mówi „jestem
+wyżej" (działa też wtedy, gdy krawędź jest poza kadrem — a przy zoomie 3 na telefonie to normalna
+sytuacja). Osobno każdy z nich zostawiał jeden z tych przypadków nierozwiązany.
+- `ledge_n` / `ledge_w` — 16×9, malowane PO wierzchu kafla, z tym samym przesunięciem. 1 px `cream`
+  na samej sylwetce + 2 px `darkGreen` cienia pod nim. „1 px" to **dwa** piksele na rząd: krawędź
+  iso ma nachylenie 2:1, więc pojedynczy piksel na rząd dałby kreskę przerywaną, nie linię.
+  Warunek malowania jest dokładnie ten sam, co dla ściany klifu (`cliffVisible`), tylko dla sąsiada
+  N/W: sąsiad niżej i nie jest rampą prowadzącą na ten kafel (od N rampa ma kierunek `S`, od W — `E`).
+  Dzięki temu rąbek nigdy nie zamyka wjazdu.
+- `tile_grass_hi{0,1,2}` — te same siatki co `tile_grass{0,1,2}`, paleta o krok jaśniejsza
+  (`green` zamiast `midGreen` w bazie). `h` == `b`, bo nad `green` nie ma już zieleni w EDG32:
+  górne krawędzie kafli płaskowyżu są gładkie, rysunek trzyma dolna krawędź (`d` = `midGreen`).
+  `tile_dirt`/`tile_water` nie mają wariantów hi — na płaskowyżach ich nie ma, a gdyby były,
+  jaśniejsza ziemia kłamałaby o materiale.
+
+**Rampy `e`/`s`: widać z nich WYŁĄCZNIE 6-pikselowy pasek — zmierzone, nie oszacowane.** Zrzut
+diagnostyczny (cała wstęga drogi na cyjan, cały nasyp i ścianka na magentę) pokazał zero magenty:
+wierzch sąsiada poziomu 1, podniesiony o ELEV_PX, nachodzi na diament rampy i zasłania cały nasyp.
+Geometrycznie: krawędź W tego wierzchu biegnie równolegle do krawędzi NW kafla rampy, 6 px niżej.
+Stąd trzy wnioski, które zmieniły plan:
+- rozjaśnienie samego nasypu (`clay`/`leather` zamiast `brown`/`darkBrown`) **nic nie daje w grze** —
+  i tak jest niewidoczny. Zostawione, bo pomaga w podglądzie i przy pojedynczym kaflu płaskowyżu;
+- stopnie w tych rampach biegną **równolegle** do widocznego paska (linie stałego `h` mają w rzucie
+  ten sam kierunek, co krawędź W kafla), więc czytały się jako pasy wzdłuż drogi, a nie jako schody.
+  W `ramp_n`/`ramp_w` jest odwrotnie (stopnie w poprzek) i tam działają — dlatego ich nie ruszamy;
+- jedyne, co zostało, to **poszerzyć widoczny pasek**: `apron()` przedłuża wstęgę drogi o
+  `RAMP_APRON = 5` px w górę, w zapas, który sprite rampy i tak ma nad diamentem, z 1-px rąbkiem
+  `darkBrown` na styku z trawą. Pasek rośnie z 6 do ~11 px — na zoomie 2 to 22 px ekranowe.
+
+**Apron świadomie wychodzi poza własny kafel.** To odstępstwo od rzutu: dosypana ziemia leży na
+kaflu obok (niżej), rysowanym WCZEŚNIEJ, więc nie zostaje zamalowana. Nie kłamie o kolizjach —
+ten kafel i tak jest przechodni, a rysunek mówi tylko „tędy się wjeżdża". Rzadki przypadek
+(seed 42, rampa (51,7)): sąsiad od strony podjazdu też jest na poziomie 1 i apron maluje ziemię
+na jego wierzchu. Obejrzane na zrzucie — wygląda jak wydeptana ścieżka schodząca z płaskowyżu,
+więc zostaje; alternatywą byłyby warianty sprite'a per otoczenie, a to cztery klatki więcej.
+
+**Droga rampy jest teraz najjaśniejszym elementem terenu** (`tan` baza, `cream` nos stopnia,
+`clay` żwir, `brown` podstopnica). Wjazd to informacja krytyczna dla gracza — ma wygrywać kontrastem
+z trawą i z szarym klifem. Rąbek `ledge_*` też jest `cream`, ale nie myli się z rampą: rąbek to
+włos grubości 1 px, rampa to wstęga 11 px z ciemnym konturem.
+
+**Nie ma cienia u podnóża ścian S/E.** Sprawdzone na zrzutach: ściany S/E i tak czytają się dobrze
+(mają własny kontur `black`), a dodatkowy pas przyciemnienia na kaflu niżej wymagałby piątej klatki
+i kolejnej reguły w `paintTile`. Problem był wyłącznie po stronie N/W.

@@ -4,7 +4,16 @@
  * Klucz = nazwa bazowa klatki. Sprite jednoklatkowy trafia do atlasu pod samym kluczem,
  * wieloklatkowy pod `klucz_0`, `klucz_1`, … (patrz `frameNames()` w `sprite.ts`).
  */
-import { tile_grass0, tile_grass1, tile_grass2, tile_dirt, tile_water } from './tiles.ts';
+import {
+  tile_grass0,
+  tile_grass1,
+  tile_grass2,
+  tile_grass_hi0,
+  tile_grass_hi1,
+  tile_grass_hi2,
+  tile_dirt,
+  tile_water,
+} from './tiles.ts';
 import { tree_full, tree_chopped, tree_stump, shadow, dot } from './nature.ts';
 import {
   worker_idle_ne,
@@ -19,6 +28,8 @@ import {
 import {
   cliff_s,
   cliff_e,
+  ledge_n,
+  ledge_w,
   ramp_n,
   ramp_e,
   ramp_s,
@@ -32,6 +43,9 @@ export const SPRITES: Record<string, SpriteDef> = {
   tile_grass0,
   tile_grass1,
   tile_grass2,
+  tile_grass_hi0,
+  tile_grass_hi1,
+  tile_grass_hi2,
   tile_dirt,
   tile_water,
   tree_full,
@@ -47,6 +61,8 @@ export const SPRITES: Record<string, SpriteDef> = {
   worker_walk_nw,
   cliff_s,
   cliff_e,
+  ledge_n,
+  ledge_w,
   ramp_n,
   ramp_e,
   ramp_s,

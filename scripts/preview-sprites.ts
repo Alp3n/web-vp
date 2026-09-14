@@ -82,9 +82,18 @@ function scene(ctx: Ctx, tiles: string[][], props: Placed[], zoom: number, origi
 //
 // Kolejność malowania (docs/architecture.md): rosnące `gx + gy`, w rzędzie rosnące `gx`.
 // Dla kafla: najpierw ściany klifu (sąsiad S / E niżej i nie jest rampą prowadzącą tutaj),
-// potem wierzch przesunięty o `-elev * ELEV_PX`. Rampa zastępuje wierzch własnym sprite'em.
+// potem wierzch przesunięty o `-elev * ELEV_PX` (na poziomie 1 w jaśniejszym wariancie
+// `tile_grass_hi*`), na końcu rąbki `ledge_n` / `ledge_w` na górnych krawędziach.
+// Rampa zastępuje wierzch własnym sprite'em.
 // ─────────────────────────────────────────────────────────────────────────────
 const ELEV_PX = 10; // == ELEV_PX z src/sim/balance.ts i assets/src/terrain.ts
+
+/** Wierzch kafla na poziomie ≥ 1: trawa o odcień jaśniejsza (jak `TILE_FRAMES_HI` w renderze). */
+const HI_TILES: Record<string, string> = {
+  tile_grass0: 'tile_grass_hi0',
+  tile_grass1: 'tile_grass_hi1',
+  tile_grass2: 'tile_grass_hi2',
+};
 
 type UpDir = 'n' | 'e' | 's' | 'w';
 
@@ -125,11 +134,17 @@ function terrainScene(ctx: Ctx, cells: Cell[][], props: Placed[], zoom: number, 
       }
       const south = at(gx, gy + 1);
       const east = at(gx + 1, gy);
+      const north = at(gx, gy - 1);
+      const west = at(gx - 1, gy);
       // rampa „prowadzi na ten kafel", gdy jej kierunek pod górę celuje w nas i różni się o 1 poziom
       const leadsHere = (n: Cell, dir: UpDir): boolean => n.ramp === dir && n.elev + 1 === c.elev;
       if (south.elev < c.elev && !leadsHere(south, 'n')) put('cliff_s', gx, gy, -(c.elev - 1) * ELEV_PX, -60);
       if (east.elev < c.elev && !leadsHere(east, 'w')) put('cliff_e', gx, gy, -(c.elev - 1) * ELEV_PX, -60);
-      put(c.tile, gx, gy, -c.elev * ELEV_PX, -50);
+      const dy = -c.elev * ELEV_PX;
+      put(c.elev > 0 ? (HI_TILES[c.tile] ?? c.tile) : c.tile, gx, gy, dy, -50);
+      // ściany N/W nie istnieją, więc górną krawędź płaskowyżu niesie rąbek malowany po wierzchu
+      if (north.elev < c.elev && !leadsHere(north, 's')) put('ledge_n', gx, gy, dy, -49);
+      if (west.elev < c.elev && !leadsHere(west, 'e')) put('ledge_w', gx, gy, dy, -49);
     }
   }
   for (const p of props) {
@@ -188,7 +203,7 @@ async function main(): Promise<void> {
     ['drzewa', (n) => n.startsWith('tree_')],
     ['robotnik — idle', (n) => n.startsWith('worker_idle_')],
     ['robotnik — walk', (n) => n.startsWith('worker_walk_')],
-    ['klify i rampy', (n) => n.startsWith('cliff_') || n.startsWith('ramp_')],
+    ['klify, rąbki i rampy', (n) => n.startsWith('cliff_') || n.startsWith('ledge_') || n.startsWith('ramp_')],
     ['głazy', (n) => n.startsWith('rock_')],
     [
       'reszta',
@@ -197,6 +212,7 @@ async function main(): Promise<void> {
         !n.startsWith('tree_') &&
         !n.startsWith('worker_') &&
         !n.startsWith('cliff_') &&
+        !n.startsWith('ledge_') &&
         !n.startsWith('ramp_') &&
         !n.startsWith('rock_'),
     ],

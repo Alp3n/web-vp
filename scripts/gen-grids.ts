@@ -93,10 +93,17 @@ const TUFT = [
   [0, 1],
 ];
 
+/** Trzy siatki trawy. Warianty „hi" (poziom 1) to TE SAME siatki, tylko jaśniejsza paleta. */
+const GRASS_GRIDS = [
+  tileGrid(scatter(7, 10, 'd', {})),
+  tileGrid(scatter(21, 5, 'd', scatter(13, 6, 't', {}, TUFT))),
+  tileGrid(scatter(41, 12, 'd', scatter(37, 3, 't', {}, TUFT))),
+];
+
 const tiles = {
-  tile_grass0: tileGrid(scatter(7, 10, 'd', {})),
-  tile_grass1: tileGrid(scatter(21, 5, 'd', scatter(13, 6, 't', {}, TUFT))),
-  tile_grass2: tileGrid(scatter(41, 12, 'd', scatter(37, 3, 't', {}, TUFT))),
+  tile_grass0: GRASS_GRIDS[0]!,
+  tile_grass1: GRASS_GRIDS[1]!,
+  tile_grass2: GRASS_GRIDS[2]!,
   tile_dirt: tileGrid(scatter(59, 7, 't', scatter(53, 12, 'd', {}))),
   // fale: ręcznie rozstawione, żeby czytały się jako poziome błyski, nie jako szum
   tile_water: tileGrid({
@@ -384,6 +391,50 @@ function cliffGrid(side: 's' | 'e'): string[] {
   return rows;
 }
 
+// ─── Rąbek górnej krawędzi płaskowyżu (`ledge_n`, `ledge_w`) ──────────────────
+// Ściany N i W są niewidoczne (zasłania je sam blok), więc od strony górnej-ekranowej
+// wierzch płaskowyżu zlewał się z gruntem za nim — gracz nie widział, gdzie kończy się
+// poziom 1. Rąbek to 1-px świetlna sylwetka na samej krawędzi diamentu + cień pod nią.
+
+/** Ile rzędów cienia pod świetlnym rąbkiem. */
+const LEDGE_SHADE = 2;
+/** Sprite rąbka: górna połowa kafla (8 rzędów) + zapas na cień. */
+const LEDGE_H = 8 + LEDGE_SHADE;
+
+/**
+ * Rząd, w którym krawędź diamentu przechodzi przez kolumnę `tx`.
+ * Krawędź iso ma 2 px na rząd, więc `ledge_n` (T→R) zajmuje x ∈ {15+2r, 16+2r},
+ * a `ledge_w` (L→T) x ∈ {15−2r, 16−2r}.
+ */
+function ledgeEdgeRow(side: 'n' | 'w', tx: number): number {
+  return side === 'n' ? Math.floor((tx - 15) / 2) : Math.floor((16 - tx) / 2);
+}
+
+/**
+ * Rąbek 16×(8+LEDGE_SHADE) malowany PO wierzchu kafla, w jego górnej połowie:
+ * `h` = 1 px światła na sylwetce, `s` = cień tuż pod nim. Lewy-górny róg sprite'a
+ * w układzie kafla: N → (16, 0), W → (0, 0).
+ */
+function ledgeGrid(side: 'n' | 'w'): string[] {
+  const ox = side === 'n' ? 16 : 0;
+  const rows: string[] = [];
+  for (let sy = 0; sy < LEDGE_H; sy += 1) {
+    let row = '';
+    for (let sx = 0; sx < 16; sx += 1) {
+      const tx = ox + sx;
+      const d = sy - ledgeEdgeRow(side, tx);
+      if (d < 0 || d > LEDGE_SHADE || !inTile(tx, sy)) row += '.';
+      else row += d === 0 ? 'h' : 's';
+    }
+    rows.push(row);
+  }
+  // cień przy prawym/lewym narożniku wychodzi poza diament, więc ostatnie rzędy bywają puste
+  while (rows.length > 0 && !rows[rows.length - 1]!.includes('h') && !rows[rows.length - 1]!.includes('s')) {
+    rows.pop();
+  }
+  return rows;
+}
+
 /** Wierzch rampy: ubita droga z 1-px podstopnicami co 1/5 wysokości i rozsypanym żwirem. */
 function roadChar(s: Slope, fx: number, fy: number, cx: number, cy: number): string {
   // Bez rąbka na bokach: rampa jest 2-kaflowa, więc ciemna krawędź dzieliłaby ją na pół.
@@ -402,13 +453,56 @@ function roadChar(s: Slope, fx: number, fy: number, cx: number, cy: number): str
 }
 
 /**
+ * O ile pikseli w górę przedłużyć wstęgę drogi w rampach `e`/`s` (patrz `apron()`).
+ * 0 = bez przedłużenia (tak wyglądały rampy przed playtestem „polish").
+ */
+const RAMP_APRON = 5;
+
+/**
+ * Podjazd („apron") dla ramp `e`/`s`: dosypana ziemia PRZED rampą, na kaflu niżej.
+ *
+ * Powód: z tych ramp widać wyłącznie 6-pikselowy pasek wzdłuż górnej krawędzi kafla.
+ * Wszystko poniżej zasłania kafel „pod górę" (wierzch poziomu 1 podniesiony o ELEV_PX
+ * nachodzi na diament rampy) — zmierzone zrzutem diagnostycznym: cały nasyp i ścianka
+ * boczna są niewidoczne. Rozjaśnienie samego paska nie wystarczyło: z zoomu 2 rampa
+ * czytała się jak przedłużenie rąbka krawędzi, a nie jak wjazd.
+ *
+ * Sprite rampy ma ELEV_PX zapasu nad diamentem (kafle N/W są rysowane WCZEŚNIEJ, więc
+ * apron ich nie gubi) i tu go używamy: wstęga drogi rośnie o `RAMP_APRON` px w górę,
+ * z 1-px ciemnym rąbkiem `o` na styku z trawą. Świadome odstępstwo od rzutu: podjazd
+ * wychodzi poza własny kafel, ale kafel pod nim i tak jest przechodni, więc rysunek
+ * nie kłamie o kolizjach — mówi „tędy się wjeżdża".
+ */
+function apron(rows: string[][]): void {
+  const ROAD_CHARS = 'rctn';
+  for (let sx = 0; sx < 32; sx += 1) {
+    let top = -1;
+    for (let sy = 0; sy < rows.length; sy += 1) {
+      if (ROAD_CHARS.includes(rows[sy]![sx]!)) {
+        top = sy;
+        break;
+      }
+    }
+    if (top < 0) continue;
+    for (let d = 1; d <= RAMP_APRON; d += 1) {
+      const sy = top - d;
+      if (sy < 0) break;
+      // ostatni rząd to ciemny rąbek na styku z trawą, reszta to ubita droga ze żwirem
+      if (d === RAMP_APRON) rows[sy]![sx] = 'o';
+      else rows[sy]![sx] = ((sx * 5 + sy * 3) % 17 === 0 ? 't' : 'r');
+    }
+  }
+}
+
+/**
  * Rampa 32×(16+ELEV_PX). Lewy-górny róg sprite'a w układzie kafla: (0, −ELEV_PX).
  *
  * Rampy `e` i `s` wznoszą się W STRONĘ kamery, więc ich wierzch jest skrajnie skrócony
  * perspektywicznie (96 px rzutu wobec 256 px diamentu przy ELEV_PX = 10) i sam nie pokrywa
- * całego kafla. Resztę diamentu domalowuje `fillBelow()` jako skałę — to odsłonięta ściana
+ * całego kafla. Resztę diamentu domalowuje `fillBelow()` jako nasyp — to odsłonięta ściana
  * pod rampą. Nigdy nie jest to nadmiarowe malowanie: leży wewnątrz własnego diamentu kafla,
- * więc wszystko, co narysowane później (kafel „pod górę"), i tak to zasłania.
+ * więc wszystko, co narysowane później (kafel „pod górę"), i tak to zasłania. Te dwie rampy
+ * dostają dodatkowo `apron()` — bez niego zostaje z nich 6-pikselowa kreska.
  */
 function rampGrid(up: UpDir): string[] {
   const s = RAMP_SLOPE[up];
@@ -430,6 +524,7 @@ function rampGrid(up: UpDir): string[] {
     rows.push(row);
   }
   fillBelow(rows);
+  if (up === 'e' || up === 's') apron(rows);
   return rows.map((row) => row.join(''));
 }
 
@@ -459,6 +554,8 @@ function fillBelow(rows: string[][]): void {
 const terrain = {
   cliff_s: cliffGrid('s'),
   cliff_e: cliffGrid('e'),
+  ledge_n: ledgeGrid('n'),
+  ledge_w: ledgeGrid('w'),
   ramp_n: rampGrid('n'),
   ramp_e: rampGrid('e'),
   ramp_s: rampGrid('s'),
@@ -473,6 +570,9 @@ const tilesFile = `/**
  * Kafle iso 32×16. Maska diamentu: \`|x-15.5|/16 + |y-7.5|/8 <= 1\` — sąsiednie kafle
  * przy offsecie (16, 8) stykają się bez dziur i bez nakładania (test: tests/assets/tiles.test.ts).
  * Podświetlenie górnej krawędzi (\`h\`) i przyciemnienie dolnej (\`d\`) dają głębię 2.5D (PLAN.md §6).
+ *
+ * \`tile_grass_hi{0,1,2}\` to te same siatki co \`tile_grass{0,1,2}\` w jaśniejszej palecie —
+ * wierzch kafla na poziomie 1 (docs/architecture.md „Wywyższenia").
  */
 import { PALETTE } from './palette.ts';
 import { ANCHOR_TILE, sprite, type SpriteDef } from './sprite.ts';
@@ -488,6 +588,20 @@ const GRASS_DARK = {
   b: PALETTE.darkGreen,
   h: PALETTE.midGreen,
   d: PALETTE.darkTeal,
+  t: PALETTE.midGreen,
+};
+
+/**
+ * Trawa poziomu 1 — każdy odcień o krok jaśniejszy niż \`GRASS\`. Ściany N/W płaskowyżu
+ * są niewidoczne, więc sam wierzch musi nieść informację „to jest wyżej": jaśniejszy
+ * kafel robi z płaskowyżu wyraźną „wyspę" nawet tam, gdzie krawędź jest za kadrem.
+ * \`h\` == \`b\`, bo nad \`green\` nie ma już zieleni w EDG32 — górne krawędzie kafli
+ * płaskowyżu są gładkie, a rysunek trzyma \`d\` (dolna krawędź) i kępki.
+ */
+const GRASS_HI = {
+  b: PALETTE.green,
+  h: PALETTE.green,
+  d: PALETTE.midGreen,
   t: PALETTE.midGreen,
 };
 
@@ -537,6 +651,21 @@ ${quote(tiles.tile_grass2)}
     ],
   ],
 });
+${[0, 1, 2]
+  .map(
+    (i) => `
+export const tile_grass_hi${i}: SpriteDef = sprite({
+  name: 'tile_grass_hi${i}',
+  anchor: ANCHOR_TILE,
+  palette: GRASS_HI,
+  frames: [
+    [
+${quote(GRASS_GRIDS[i]!)}
+    ],
+  ],
+});`,
+  )
+  .join('\n')}
 
 export const tile_dirt: SpriteDef = sprite({
   name: 'tile_dirt',
@@ -690,13 +819,16 @@ const terrainFile = `/**
  *  - \`cliff_s\`, \`cliff_e\` — ściany klifu 16×(8+ELEV_PX), leżą WEWNĄTRZ nieprzesuniętego
  *    diamentu kafla (od krawędzi wierzchu podniesionego o ELEV_PX w dół do gruntu);
  *  - \`ramp_{n|e|s|w}\` — 32×(16+ELEV_PX): pochyły wierzch + widoczna ścianka boczna;
- *    \`_inner\` to ten sam wierzch bez ścianki (wewnętrzny kafel rampy 2-kaflowej);
+ *  - \`ledge_n\`, \`ledge_w\` — 16×${terrain.ledge_n.length} rąbek górnej krawędzi wierzchu (ściany N/W
+ *    są niewidoczne, więc bez rąbka płaskowyż zlewa się z gruntem za nim);
  *  - \`rock_small\`, \`rock_big\` — głazy, kotwica u podstawy.
  *
  * Pozycjonowanie względem \`gridToScreen(gx, gy)\` wynika wprost z \`pivot\` w atlasie:
  *   cliff_s: left = screenX − 16, top = screenY − ELEV_PX
  *   cliff_e: left = screenX,      top = screenY − ELEV_PX
  *   ramp_*:  left = screenX − 16, top = screenY − (8 + ELEV_PX)
+ *   ledge_n: left = screenX,      top = screenY − 8
+ *   ledge_w: left = screenX − 16, top = screenY − 8
  */
 import { PALETTE } from './palette.ts';
 import { ANCHOR_FOOT, sprite, type Anchor, type SpriteDef } from './sprite.ts';
@@ -714,6 +846,13 @@ const ANCHOR_CLIFF_S: Anchor = { x: 1, y: ELEV_PX / CLIFF_H }; // ${(ELEV_PX / (
 const ANCHOR_CLIFF_E: Anchor = { x: 0, y: ELEV_PX / CLIFF_H };
 /** Dolny (nieprzesunięty) diament rampy pokrywa kafel → top = screenY − (8 + ELEV_PX). */
 const ANCHOR_RAMP: Anchor = { x: 0.5, y: (8 + ELEV_PX) / RAMP_H }; // ${((8 + ELEV_PX) / (16 + ELEV_PX)).toFixed(6)}
+
+/** Wysokość rąbka krawędzi: górna połowa kafla + zapas na cień pod sylwetką. */
+const LEDGE_H = ${terrain.ledge_n.length};
+/** Rąbek N zajmuje prawą połowę górnej części kafla → left = screenX. */
+const ANCHOR_LEDGE_N: Anchor = { x: 0, y: 8 / LEDGE_H }; // ${(8 / terrain.ledge_n.length).toFixed(6)}
+/** Rąbek W zajmuje lewą połowę → left = screenX − 16. */
+const ANCHOR_LEDGE_W: Anchor = { x: 1, y: 8 / LEDGE_H };
 
 /**
  * Skała ściany S (jaśniejsza — światło z góry-lewej pada na ścianę zwróconą w +gy).
@@ -737,25 +876,40 @@ const ROCK_E = {
 };
 
 /**
- * Ścianki rampy: ubita ZIEMIA, nie skała. Rampa jest usypana, a nie wykuta — brąz odróżnia ją
- * od szarych klifów i sprawia, że mocno skrócone perspektywicznie \`ramp_e\`/\`ramp_s\`
- * (wznoszą się w stronę kamery) czytają się jako jeden obiekt z drogą na górze,
- * a nie jako kamienny blok z pomarańczową kreską. Odstępstwo od „kolory ścianek jak \`cliff_*\`".
+ * Nasyp rampy: ubita ZIEMIA, nie skała — rampa jest usypana, a nie wykuta.
+ * Po playteście rozjaśniony o dwa kroki (\`clay\`/\`leather\` zamiast \`brown\`/\`darkBrown\`):
+ * ciemny nasyp czytał się jako dziura w zboczu, a nie jako podjazd. Dolny 1 px to
+ * \`darkBrown\` (a nie \`black\` jak w klifie) — rampa ma odcinać się od ziemi, ale nie
+ * wyglądać jak wykuty blok.
  */
 const RAMP_WALL = {
   g: PALETTE.brown,
-  l: PALETTE.leather,
-  b: PALETTE.brown,
-  d: PALETTE.darkBrown,
-  o: PALETTE.black,
+  l: PALETTE.clay,
+  b: PALETTE.leather,
+  d: PALETTE.brown,
+  o: PALETTE.darkBrown,
 };
 
-/** Wierzch rampy: ubita droga. r = baza, c = nos stopnia (światło), t = żwir, n = podstopnica i rąbek. */
+/**
+ * Wierzch rampy: jasna, piaszczysta droga. r = baza, c = nos stopnia (światło),
+ * t = żwir, n = podstopnica i rąbek. Rozjaśnione po playteście (\`tan\`/\`cream\`
+ * zamiast \`leather\`/\`clay\`): wstęga drogi to główny sygnał „tędy się wjeżdża",
+ * więc musi być najjaśniejszym elementem terenu, także na zoomie 2.
+ */
 const ROAD = {
-  r: PALETTE.leather,
-  c: PALETTE.clay,
-  t: PALETTE.tan,
-  n: PALETTE.darkBrown,
+  r: PALETTE.tan,
+  c: PALETTE.cream,
+  t: PALETTE.clay,
+  n: PALETTE.brown,
+};
+
+/**
+ * Rąbek górnej krawędzi płaskowyżu: h = 1 px światła na samej sylwetce,
+ * s = cień pod nim (ta sama zieleń, co rąbek pod wierzchem na ścianie klifu S).
+ */
+const LEDGE = {
+  h: PALETTE.cream,
+  s: PALETTE.darkGreen,
 };
 
 /**
@@ -789,6 +943,28 @@ export const cliff_e: SpriteDef = sprite({
   frames: [
     [
 ${quote(terrain.cliff_e)}
+    ],
+  ],
+});
+
+export const ledge_n: SpriteDef = sprite({
+  name: 'ledge_n',
+  anchor: ANCHOR_LEDGE_N,
+  palette: LEDGE,
+  frames: [
+    [
+${quote(terrain.ledge_n)}
+    ],
+  ],
+});
+
+export const ledge_w: SpriteDef = sprite({
+  name: 'ledge_w',
+  anchor: ANCHOR_LEDGE_W,
+  palette: LEDGE,
+  frames: [
+    [
+${quote(terrain.ledge_w)}
     ],
   ],
 });

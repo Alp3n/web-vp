@@ -11,6 +11,9 @@ const REQUIRED_FRAMES = [
   'tile_grass0',
   'tile_grass1',
   'tile_grass2',
+  'tile_grass_hi0',
+  'tile_grass_hi1',
+  'tile_grass_hi2',
   'tile_dirt',
   'tile_water',
   'tree_full',
@@ -21,6 +24,8 @@ const REQUIRED_FRAMES = [
   // teren wywyższony (docs/architecture.md „Wywyższenia (elewacja)")
   'cliff_s',
   'cliff_e',
+  'ledge_n',
+  'ledge_w',
   ...(['n', 'e', 's', 'w'] as const).map((d) => `ramp_${d}`),
   'rock_small',
   'rock_big',
@@ -29,6 +34,24 @@ const REQUIRED_FRAMES = [
 ];
 
 const ELEV_PX = 10; // == ELEV_PX z src/sim/balance.ts i assets/src/terrain.ts
+
+/** Jasność (luma) koloru `#rrggbb` — do porównań „jaśniejszy/ciemniejszy". */
+const lum = (hex: string): number =>
+  Number.parseInt(hex.slice(1, 3), 16) * 0.3 +
+  Number.parseInt(hex.slice(3, 5), 16) * 0.59 +
+  Number.parseInt(hex.slice(5, 7), 16) * 0.11;
+
+/** Średnia jasność wszystkich nieprzezroczystych pikseli klatki 0. */
+const avgLum = (key: string): number => {
+  const def = SPRITES[key]!;
+  const hexes = def.frames[0]!.flatMap((row) =>
+    [...row].flatMap((c) => {
+      const hex = def.palette[c];
+      return hex === null || hex === undefined ? [] : [hex];
+    }),
+  );
+  return hexes.reduce((a, h) => a + lum(h), 0) / hexes.length;
+};
 
 describe('rejestr SPRITES', () => {
   const names = allFrameNames();
@@ -43,7 +66,16 @@ describe('rejestr SPRITES', () => {
   });
 
   it('kafle są diamentem 32×16 z kotwicą w środku', () => {
-    for (const key of ['tile_grass0', 'tile_grass1', 'tile_grass2', 'tile_dirt', 'tile_water']) {
+    for (const key of [
+      'tile_grass0',
+      'tile_grass1',
+      'tile_grass2',
+      'tile_grass_hi0',
+      'tile_grass_hi1',
+      'tile_grass_hi2',
+      'tile_dirt',
+      'tile_water',
+    ]) {
       const def = SPRITES[key]!;
       expect([key, def.width, def.height]).toEqual([key, 32, 16]);
       expect(def.anchor).toEqual({ x: 0.5, y: 0.5 });
@@ -134,21 +166,54 @@ describe('rejestr SPRITES', () => {
   });
 
   it('ściana S jest jaśniejsza od ściany E (światło z góry-lewej)', () => {
-    const lum = (hex: string): number =>
-      Number.parseInt(hex.slice(1, 3), 16) * 0.3 +
-      Number.parseInt(hex.slice(3, 5), 16) * 0.59 +
-      Number.parseInt(hex.slice(5, 7), 16) * 0.11;
-    const avg = (key: string): number => {
+    expect(avgLum('cliff_s')).toBeGreaterThan(avgLum('cliff_e'));
+  });
+
+  it('tile_grass_hi* to ta sama siatka co tile_grass*, tylko jaśniejsza paleta', () => {
+    for (const i of [0, 1, 2]) {
+      const base = SPRITES[`tile_grass${i}`]!;
+      const hi = SPRITES[`tile_grass_hi${i}`]!;
+      expect([i, hi.frames]).toEqual([i, base.frames]);
+      // płaskowyż nie może być ciemniejszy od gruntu — baza i cały kafel jaśniejsze
+      expect([i, lum(hi.palette['b']!) > lum(base.palette['b']!)]).toEqual([i, true]);
+      expect([i, avgLum(`tile_grass_hi${i}`) > avgLum(`tile_grass${i}`)]).toEqual([i, true]);
+    }
+  });
+
+  it('rąbki: 16×9, pivot w środku kafla, ledge_w lustrzany do ledge_n', () => {
+    for (const [key, x] of [
+      ['ledge_n', 0],
+      ['ledge_w', 1],
+    ] as const) {
       const def = SPRITES[key]!;
-      const hexes = def.frames[0]!.flatMap((row) =>
-        [...row].flatMap((c) => {
-          const hex = def.palette[c];
-          return hex === null || hex === undefined ? [] : [hex];
-        }),
-      );
-      return hexes.reduce((a, h) => a + lum(h), 0) / hexes.length;
-    };
-    expect(avg('cliff_s')).toBeGreaterThan(avg('cliff_e'));
+      expect([key, def.width, def.height]).toEqual([key, 16, 9]);
+      expect([key, def.anchor]).toEqual([key, { x, y: 8 / 9 }]);
+      expect(def.frames).toHaveLength(1);
+    }
+    const flip = (rows: readonly string[]): string[] => rows.map((r) => [...r].reverse().join(''));
+    expect(flip(SPRITES['ledge_w']!.frames[0]!)).toEqual([...SPRITES['ledge_n']!.frames[0]!]);
+  });
+
+  it('rąbek to 1 px światła na sylwetce krawędzi + cień pod nim', () => {
+    const def = SPRITES['ledge_n']!;
+    const frame = def.frames[0]!;
+    // krawędź N diamentu w kolumnach 16..31 kafla: rząd r zajmuje x = 15+2r i 16+2r
+    for (let r = 0; r < 8; r += 1) {
+      for (const tx of [15 + 2 * r, 16 + 2 * r]) {
+        const sx = tx - 16;
+        if (sx < 0 || sx > 15) continue;
+        expect([r, sx, frame[r]![sx]]).toEqual([r, sx, 'h']);
+      }
+    }
+    // jasny piksel nie leży nigdzie indziej niż na krawędzi; reszta to cień albo nic
+    for (let y = 0; y < frame.length; y += 1) {
+      for (let sx = 0; sx < 16; sx += 1) {
+        if (frame[y]![sx] !== 'h') continue;
+        expect([y, sx, Math.floor((sx + 16 - 15) / 2)]).toEqual([y, sx, y]);
+      }
+    }
+    expect(lum(def.palette['h']!)).toBeGreaterThan(lum(SPRITES['tile_grass_hi0']!.palette['b']!));
+    expect(lum(def.palette['s']!)).toBeLessThan(lum(SPRITES['tile_grass_hi0']!.palette['b']!));
   });
 
   it('rampy: 32×(16+ELEV_PX), pivot {0.5, (8+ELEV_PX)/(16+ELEV_PX)}', () => {
@@ -157,6 +222,29 @@ describe('rejestr SPRITES', () => {
       const def = SPRITES[key]!;
       expect([key, def.width, def.height]).toEqual([key, 32, 16 + ELEV_PX]);
       expect([key, def.anchor]).toEqual([key, { x: 0.5, y: (8 + ELEV_PX) / (16 + ELEV_PX) }]);
+    }
+  });
+
+  it('rampy e/s mają podjazd ponad diamentem kafla z ciemnym rąbkiem od góry', () => {
+    // z ramp wznoszących się W STRONĘ kamery widać wyłącznie ~6-px pasek wzdłuż górnej
+    // krawędzi kafla (reszta jest zasłonięta przez podniesiony wierzch poziomu 1),
+    // więc wstęga drogi jest przedłużona w górę — bez tego zostaje z rampy kreska.
+    const inDiamond = (x: number, y: number): boolean =>
+      Math.abs(x - 15.5) / 16 + Math.abs(y - ELEV_PX - 7.5) / 8 <= 1;
+    for (const key of ['ramp_e', 'ramp_s']) {
+      const frame = SPRITES[key]!.frames[0]!;
+      let above = 0;
+      for (let y = 0; y < frame.length; y += 1) {
+        for (let x = 0; x < 32; x += 1) {
+          if (frame[y]![x] !== '.' && !inDiamond(x, y)) above += 1;
+        }
+      }
+      expect([key, above > 60]).toEqual([key, true]);
+      for (let x = 0; x < 32; x += 1) {
+        const top = frame.findIndex((row) => row[x] !== '.');
+        if (top < 0 || inDiamond(x, top)) continue;
+        expect([key, x, frame[top]![x]]).toEqual([key, x, 'o']);
+      }
     }
   });
 
