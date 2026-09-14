@@ -94,11 +94,12 @@ describe('determinizm symulacji', () => {
   it('hash generateWorld(42) zgadza się ze snapshotem', () => {
     // Snapshot generatora mapy. Zmiana = świadoma zmiana generatora:
     // zaktualizuj wartość i opisz zmianę w docs/decisions.md.
-    expect(hashWorld(generateWorld(42))).toBe('bb6d16d1');
+    // Aktualizacja: wywyższenia (płaskowyże, rampy, głazy) — docs/decisions.md.
+    expect(hashWorld(generateWorld(42))).toBe('788ea845');
   });
 
   it('hash po 1000 tickach skryptu zgadza się ze snapshotem', () => {
-    expect(hashWorld(runScript(generateWorld(42), 1000))).toBe('a36e95ad');
+    expect(hashWorld(runScript(generateWorld(42), 1000))).toBe('0b025216');
   });
 
   it('hash ma 8 znaków hex', () => {

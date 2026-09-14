@@ -17,6 +17,12 @@ export const TILE_W = 32;
 export const TILE_H = 16;
 export const UNIT_RADIUS = 0.3;
 
+// ——— Wywyższenia (kontrakt: docs/architecture.md, sekcja „Wywyższenia") ———
+/** Ile poziomów terenu: 0 = ziemia, 1 = płaskowyż. */
+export const ELEV_LEVELS = 2;
+/** O ile pikseli (1×) wyżej rysowany jest poziom 1 — wysokość ściany klifu. */
+export const ELEV_PX = 10;
+
 /** Sekundy -> ticki (zaokrąglone w górę do pełnego ticka). */
 export const s = (seconds: number): number => Math.round(seconds * TICK_RATE);
 
@@ -36,6 +42,8 @@ export const BALANCE = {
     unitRadius: UNIT_RADIUS,
     /** Krótszy wektor wejścia niż to = brak kierunku (`dirFromVector` -> null). */
     dirMinLength: 0.001,
+    elevLevels: ELEV_LEVELS,
+    elevPx: ELEV_PX,
   },
 
   round: {
@@ -215,6 +223,50 @@ export const BALANCE = {
       scatteredFraction: 0.12,
       /** Budżet prób losowania na jedno drzewo (ochrona przed pętlą). */
       attemptsPerTree: 40,
+    },
+    /**
+     * Płaskowyże (poziom 1). Bloby o „poszarpanym" brzegu, wejście wyłącznie rampą
+     * szerokości 2; reszta krawędzi to klif (nieprzejezdny).
+     */
+    plateaus: {
+      countMin: 2,
+      countMax: 4,
+      radiusMin: 5,
+      radiusMax: 9,
+      /** Amplituda szumu brzegu jako ułamek promienia (0 = idealne koło). */
+      edgeNoise: 0.14,
+      /** Margines od krawędzi mapy dla kafli płaskowyżu (kafle). */
+      margin: 6,
+      /** Żaden kafel płaskowyżu nie leży bliżej startu robotnika niż tyle kafli. */
+      minDistanceFromStart: 12,
+      /** Minimalny odstęp od wody (kafle) — żeby dało się obejść płaskowyż brzegiem. */
+      minDistanceFromWater: 2,
+      /** Minimalny odstęp między płaskowyżami (kafle) — bloby nigdy się nie stykają. */
+      minGap: 3,
+      /** Budżet prób losowania jednego bloba. */
+      placementAttempts: 60,
+      rampsMin: 1,
+      rampsMax: 2,
+      /** Szerokość rampy w kaflach (kontrakt: 2). */
+      rampWidth: 2,
+      /** Minimalny odstęp (Czebyszew) między dwiema rampami tego samego płaskowyżu. */
+      rampMinGap: 3,
+      /**
+       * Ile razy generator może „otworzyć drzwi" (usunąć drzewo/głaz), żeby każdy
+       * niezablokowany kafel płaskowyżu był osiągalny ze startu.
+       */
+      reachabilityDoors: 64,
+    },
+    /** Głazy: statyczne blokery poza polaną startową i korytarzami ramp. */
+    rocks: {
+      countMin: 20,
+      countMax: 40,
+      /** Wokół startu w tym promieniu nie ma głazów (kafle). */
+      startSafeRadius: 5,
+      /** Szansa na duży głaz (`size = 1`). */
+      bigChance: 0.35,
+      /** Budżet prób losowania na jeden głaz. */
+      attemptsPerRock: 40,
     },
   },
 

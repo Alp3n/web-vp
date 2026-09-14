@@ -56,6 +56,26 @@ export interface Tree {
   state: 'full' | 'chopped' | 'stump';
 }
 
+/**
+ * Kierunek rampy = kierunek POD GÓRĘ w przestrzeni siatki.
+ * 0 = brak rampy, 1 = N (-y), 2 = E (+x), 3 = S (+y), 4 = W (-x).
+ */
+export type RampDir = 0 | 1 | 2 | 3 | 4;
+
+export const RAMP_NONE = 0 as const;
+export const RAMP_N = 1 as const;
+export const RAMP_E = 2 as const;
+export const RAMP_S = 3 as const;
+export const RAMP_W = 4 as const;
+
+/** Głaz: statyczny bloker (jak drzewo), `size` tylko do wyboru sprite'a. */
+export interface Rock {
+  id: EntityId;
+  x: number;
+  y: number;
+  size: 0 | 1;
+}
+
 export interface Unit {
   id: EntityId;
   kind: 'worker' | 'vampire';
@@ -75,9 +95,14 @@ export interface World {
   height: number;
   /** `TileKind`, indeks = y * width + x. */
   tiles: Uint8Array;
-  /** 1 = statycznie zablokowane (drzewo, woda). */
+  /** 1 = statycznie zablokowane (drzewo, woda, głaz). */
   blocked: Uint8Array;
+  /** Poziom terenu 0|1 per kafel, indeks = y * width + x. */
+  elevation: Uint8Array;
+  /** `RampDir` per kafel: 0 = brak rampy, 1..4 = kierunek pod górę. */
+  ramp: Uint8Array;
   trees: Tree[];
+  rocks: Rock[];
   units: Unit[];
   wood: number;
   gold: number;
@@ -121,6 +146,16 @@ export function treeAt(world: World, x: number, y: number): Tree | undefined {
   const ty = Math.floor(y);
   for (const tree of world.trees) {
     if (tree.x === tx && tree.y === ty) return tree;
+  }
+  return undefined;
+}
+
+/** Kafel o współrzędnych (x, y) → głaz albo `undefined`. */
+export function rockAt(world: World, x: number, y: number): Rock | undefined {
+  const tx = Math.floor(x);
+  const ty = Math.floor(y);
+  for (const rock of world.rocks) {
+    if (rock.x === tx && rock.y === ty) return rock;
   }
   return undefined;
 }

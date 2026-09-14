@@ -9,6 +9,7 @@ import {
   circleBlocked,
   createEmptyWorld,
   dirFromVector,
+  elevationAt,
   isBlocked,
   moveCmd,
   moveUnits,
@@ -247,5 +248,95 @@ describe('step', () => {
     step(world, [moveCmd(unit.id, 2)]);
     step(world, []);
     expect(unit.pos.x).toBeCloseTo(4 + 2 * STEP, 10);
+  });
+});
+
+// ——— Wywyższenia: klify i rampy (kontrakt: docs/architecture.md) ———
+
+/**
+ * Mapa testowa 16×16: płaskowyż (poziom 1) na kaflach x 2..9, y 1..4
+ * i rampa szerokości 2 prowadząca na niego od południa — kafle (5,5) i (6,5),
+ * kierunek 1 = N. Reszta mapy jest płaska na poziomie 0.
+ */
+function plateauWorld(): World {
+  const world = testWorld(16, 16);
+  for (let y = 1; y <= 4; y++) {
+    for (let x = 2; x <= 9; x++) world.elevation[tileIndex(world, x, y)] = 1;
+  }
+  world.ramp[tileIndex(world, 5, 5)] = 1;
+  world.ramp[tileIndex(world, 6, 5)] = 1;
+  return world;
+}
+
+function walk(world: World, unit: Unit, dir: Dir8, ticks: number): void {
+  for (let i = 0; i < ticks; i++) step(world, [moveCmd(unit.id, dir)]);
+}
+
+describe('kolizje z klifami i rampy', () => {
+  it('jednostka nie wchodzi na klif', () => {
+    const world = plateauWorld();
+    const unit = addUnit(world, 8.5, 6.5);
+    walk(world, unit, 0, 40); // N, prosto w ścianę płaskowyżu
+    expect(unit.pos.x).toBe(8.5);
+    expect(unit.pos.y).toBeGreaterThanOrEqual(5 + UNIT_RADIUS);
+    expect(unit.pos.y).toBeLessThan(5 + UNIT_RADIUS + STEP);
+    expect(elevationAt(world, unit.pos.x, unit.pos.y)).toBe(0);
+  });
+
+  it('wchodzi na płaskowyż rampą 2-kaflową i ma elevationAt == 1', () => {
+    const world = plateauWorld();
+    const unit = addUnit(world, 5.5, 7.5);
+    // Na wysokości środka rampy jest dokładnie w połowie podjazdu.
+    walk(world, unit, 0, 10);
+    expect(unit.pos.y).toBeCloseTo(5.5, 6);
+    expect(elevationAt(world, unit.pos.x, unit.pos.y)).toBeCloseTo(0.5, 6);
+
+    walk(world, unit, 0, 30);
+    expect(unit.pos.y).toBeLessThan(5);
+    expect(elevationAt(world, unit.pos.x, unit.pos.y)).toBe(1);
+    // Na szczycie zatrzymuje ją północna krawędź płaskowyżu (klif).
+    expect(unit.pos.y).toBeGreaterThanOrEqual(1 + UNIT_RADIUS);
+
+    // Druga połowa rampy działa tak samo.
+    const twin = addUnit(world, 6.5, 7.5);
+    walk(world, twin, 0, 40);
+    expect(elevationAt(world, twin.pos.x, twin.pos.y)).toBe(1);
+  });
+
+  it('nie wychodzi z rampy bokiem na klif', () => {
+    const world = plateauWorld();
+    // Kafel na zachód od rampy podniesiony do poziomu 1 = ściana obok podjazdu.
+    world.elevation[tileIndex(world, 4, 5)] = 1;
+    const unit = addUnit(world, 5.5, 5.5);
+    walk(world, unit, 6, 20); // W
+    expect(unit.pos.y).toBe(5.5);
+    expect(unit.pos.x).toBeGreaterThanOrEqual(5 + UNIT_RADIUS);
+    expect(elevationAt(world, unit.pos.x, unit.pos.y)).toBeCloseTo(0.5, 6);
+    // W bok na zwykły kafel poziomu 0 (na wschód) wyjść wolno.
+    walk(world, unit, 2, 20); // E
+    expect(unit.pos.x).toBeGreaterThan(7);
+  });
+
+  it('schodzi z płaskowyżu tylko rampą', () => {
+    const world = plateauWorld();
+    const unit = addUnit(world, 8.5, 3.5);
+    walk(world, unit, 4, 40); // S — prosto na krawędź klifu
+    expect(unit.pos.y).toBeLessThanOrEqual(5 - UNIT_RADIUS);
+    expect(elevationAt(world, unit.pos.x, unit.pos.y)).toBe(1);
+
+    // Dojście nad rampę i zejście: dopiero tędy da się wrócić na poziom 0.
+    walk(world, unit, 6, 10); // W do kolumny rampy (x 8.5 -> 6.5)
+    expect(unit.pos.x).toBeCloseTo(6.5, 6);
+    walk(world, unit, 4, 40); // S
+    expect(unit.pos.y).toBeGreaterThan(6);
+    expect(elevationAt(world, unit.pos.x, unit.pos.y)).toBe(0);
+  });
+
+  it('rampa nie robi dziury w klifie dla sąsiednich kolumn', () => {
+    const world = plateauWorld();
+    const unit = addUnit(world, 4.5, 6.5);
+    walk(world, unit, 0, 40); // N obok rampy
+    expect(unit.pos.y).toBeGreaterThanOrEqual(5 + UNIT_RADIUS);
+    expect(elevationAt(world, unit.pos.x, unit.pos.y)).toBe(0);
   });
 });

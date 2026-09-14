@@ -163,3 +163,48 @@ Korona `tree_full` miała bazę `midGreen`, identyczną z bazą `tile_grass0` �
 (screenshot `phase1-c.png`). Poprawka w generatorze (`scripts/gen-grids.ts`), nie w renderze (PLAN §6):
 baza korony `darkGreen`, cień `darkTeal`, światło `midGreen`, plus pełny 1-px kontur `darkBrown`.
 Zweryfikowane w grze (`phase1-trees.png`): drzewa czytelne na grass0/1/2 i ziemi.
+
+## 2026-09-14 — Wywyższenia: reguły ramp i klifów (generator + `canCross`)
+
+Kontrakt (`docs/architecture.md`, „Wywyższenia") mówi, jak wygląda przejście między poziomami;
+poniżej decyzje, których kontrakt nie przesądza, podjęte przy implementacji `src/sim`.
+
+**`canCross` jako jedna reguła dla wszystkiego.** Kolizje w `movement.ts` nie mają osobnej logiki
+klifów: kandydat po przesunięciu osiowym jest odrzucany, gdy `canCross(T, T')` jest fałszywe albo
+gdy okrąg jednostki zachodzi na kafel `X ≠ T'` z fałszywym `canCross(T', X)`. Dzięki temu klif,
+woda, drzewo i głaz blokują tą samą ścieżką kodu, a ślizganie po osiach (x, potem y) zostaje bez
+zmian. Koszt: ≤ 4 zapytania `canCross` na oś (promień 0.3 dotyka najwyżej 4 kafli).
+`canCross` jest symetryczne z konstrukcji — regułę rampy sprawdzamy z obu stron (`sideOk`),
+więc „w górę / w dół / w bok" wychodzi tak samo niezależnie od kolejności argumentów.
+Dwie rampy w jednej linii (jedna za drugą) nie łączą się: przejście „w tył" wymaga `ramp == 0`,
+czyli poziomy nie kaskadują — przy `ELEV_LEVELS = 2` nie ma tego potrzeby.
+
+**Generator dopisany PO istniejących krokach.** `paintGrass/Dirt/Water`, polany, drzewa i robotnik
+losują dokładnie tak jak wcześniej; płaskowyże, rampy i głazy dokładają swoje wywołania `rngNext`
+na końcu. Charakter mapy z Fazy 1 zostaje, zmienia się tylko przypięty hash seeda 42
+(`bb6d16d1` → `788ea845`, a po 1000 tickach `a36e95ad` → `0b025216`).
+
+**Płaskowyż = „poszarpane" koło.** Brzeg to promień modulowany dwiema sinusoidami o losowej fazie
+(`edgeNoise = 0.14`) — tanio, deterministycznie i bez dodatkowej tablicy szumu. Kandydat jest
+odrzucany w całości (a nie przycinany), jeśli którykolwiek jego kafel łamie warunek: margines
+6 kafli od krawędzi mapy, ≥ 2 kafle od wody, ≥ 12 kafli od startu, brak kolizji z innym
+płaskowyżem (okrąg + `minGap = 3`). Przycinanie dawałoby płaskowyże przyklejone do wody i
+odcinające brzegowe kieszenie mapy.
+
+**Rampy wybierane spośród wszystkich kandydatów naraz.** Zamiast „próbuj kierunku N, potem E…"
+generator zbiera wszystkie poprawne pary kafli (4 kierunki × krawędź płaskowyżu) i losuje z nich
+1–2 rampy, z odstępem Czebyszewa ≥ 3 między rampami tego samego płaskowyżu. Dodatkowy warunek:
+podnóże rampy musi leżeć po stronie osiągalnej ze startu „po terenie" (woda blokuje, drzewa nie —
+te generator i tak wycina). Płaskowyż bez ani jednej poprawnej rampy jest obniżany do poziomu 0.
+Wejście na rampę czyści korytarz 2×3 (kafle rampy + ich sąsiedzi dolni i górni).
+
+**Głazy omijają korytarze ramp.** Kontrakt zabrania głazu na rampie; dokładamy też zakaz na kaflach
+ortogonalnie sąsiadujących z rampą, żeby 2-kaflowy podjazd nigdy nie zwężał się do jednego kafla.
+Poza tym: 20–40 sztuk, poziom 0 i 1, nie w wodzie, nie na drzewie, ≥ 5 kafli od startu.
+
+**Gwarancja osiągalności zamiast nadziei.** Drzewa (i głazy) mogą przypadkiem odciąć fragment
+wierzchowiny. Na końcu generacji BFS z `canCross` sprawdza, czy każdy niezablokowany kafel
+płaskowyżu jest osiągalny ze startu; jeśli nie — generator „otwiera drzwi", usuwając pojedynczą
+przeszkodę (drzewo/głaz) na najkrótszej drodze i powtarza (limit 64). Alternatywa (obniżanie
+odciętych fragmentów) robiła dziury w wierzchowinie. Sprawdzone na 300 seedach: 0 naruszeń
+(2–4 płaskowyże, każdy z rampą, 0 nieosiągalnych kafli, głazy 20–40).
