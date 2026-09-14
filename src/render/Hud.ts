@@ -18,6 +18,8 @@ export interface HudStats {
   seed: number;
   gx: number;
   gy: number;
+  /** Wysokość terenu pod jednostką (`elevationAt`) — na rampie ułamkowa. */
+  elev: number;
 }
 
 /**
@@ -62,7 +64,9 @@ export class Hud {
 
   update(stats: HudStats): void {
     this.status.setText(`FPS ${Math.round(stats.fps)} · tick ${stats.tick} · seed ${stats.seed}`);
-    this.debug.setText(`gx ${stats.gx.toFixed(1)} · gy ${stats.gy.toFixed(1)}`);
+    this.debug.setText(
+      `gx ${stats.gx.toFixed(1)} · gy ${stats.gy.toFixed(1)} · elev ${stats.elev.toFixed(1)}`,
+    );
     this.drawPanel();
   }
 

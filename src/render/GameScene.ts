@@ -1,9 +1,12 @@
 import Phaser from 'phaser';
-import type { Command, Dir8, EntityId, TileKind, Tree, Unit, World } from '../sim';
-import { DIR_VECTORS, TICK_MS, generateWorld, moveCmd, step } from '../sim';
+import type { Command, Dir8, EntityId, Rock, Tree, Unit, World } from '../sim';
+import { DIR_VECTORS, ELEV_PX, TICK_MS, elevationAt, generateWorld, moveCmd, step } from '../sim';
 import { ATLAS_KEY } from './BootScene';
 import { animKey } from './facing';
-import { HALF_TILE_H, HALF_TILE_W, depthFor, gridToScreen, mapBounds } from './iso';
+import type { Point } from './iso';
+import { depthFor, gridToScreen, mapBounds } from './iso';
+import type { PutFrame } from './terrainPaint';
+import { TERRAIN_TOP_MARGIN, paintTerrain } from './terrainPaint';
 import { Hud } from './Hud';
 import { Joystick } from '../input/joystick';
 import { readSeed } from './params';
@@ -23,21 +26,14 @@ const ZOOM_SMALL = 2;
 const ZOOM_LARGE_MIN_SIDE = 700;
 const HUD_UPDATE_MS = 250;
 
-/** `TileKind` -> nazwa klatki w atlasie. */
-const FALLBACK_TILE_FRAME = 'tile_grass0';
-const TILE_FRAMES: readonly string[] = [
-  'tile_grass0',
-  'tile_grass1',
-  'tile_grass2',
-  'tile_dirt',
-  'tile_water',
-];
-
 const TREE_FRAMES: Record<Tree['state'], string> = {
   full: 'tree_full',
   chopped: 'tree_chopped',
   stump: 'tree_stump',
 };
+
+/** `Rock['size']` -> nazwa klatki. */
+const ROCK_FRAMES: readonly string[] = ['rock_small', 'rock_big'];
 
 interface UnitView {
   unit: Unit;
@@ -87,6 +83,7 @@ export class GameScene extends Phaser.Scene {
     const worldObjects: Phaser.GameObjects.GameObject[] = [];
     worldObjects.push(this.buildTerrain());
     worldObjects.push(...this.buildTrees());
+    worldObjects.push(...this.buildRocks());
     for (const unit of this.world.units) {
       const view = this.buildUnitView(unit);
       this.views.set(unit.id, view);
@@ -122,6 +119,7 @@ export class GameScene extends Phaser.Scene {
         seed: this.seed,
         gx: this.player.unit.pos.x,
         gy: this.player.unit.pos.y,
+        elev: elevationAt(this.world, this.player.unit.pos.x, this.player.unit.pos.y),
         facing: this.player.unit.facing,
         moving: this.player.unit.moving,
         anim: this.player.sprite.anims.currentAnim?.key ?? null,
@@ -140,52 +138,66 @@ export class GameScene extends Phaser.Scene {
    * Cały teren rysowany RAZ do `RenderTexture` (4096 kafli jako jedna tekstura):
    * zero kosztu sortowania i renderowania per kafel w każdej klatce.
    * Tekstura jest kotwiczona w lewym górnym rogu bounding boxa mapy, którego x jest
-   * ujemny (skrajny kafel to (0, MAP_H) -> screenX = -MAP_H * 16).
+   * ujemny (skrajny kafel to (0, MAP_H) -> screenX = -MAP_H * 16), a y podniesiony
+   * o `TERRAIN_TOP_MARGIN` — wierzchy poziomu 1 i sprite'y ramp wystają nad ten box.
+   *
+   * Kolejność malowania: rosnące `gx + gy` (od tyłu do przodu), w rzędzie rosnące `gx`,
+   * per kafel najpierw ściany klifu, potem wierzch — jak w `scripts/preview-sprites.ts`.
    */
   private buildTerrain(): Phaser.GameObjects.RenderTexture {
     const bounds = mapBounds(this.world.width, this.world.height);
+    const originX = bounds.x;
+    const originY = bounds.y - TERRAIN_TOP_MARGIN;
     const rt = this.add
-      .renderTexture(bounds.x, bounds.y, bounds.width, bounds.height)
+      .renderTexture(originX, originY, bounds.width, bounds.height + TERRAIN_TOP_MARGIN)
       .setOrigin(0, 0)
       .setDepth(DEPTH_GROUND);
 
+    // Pozycja klatki wynika wprost z jej `pivot` w atlasie: pivot siada na środku kafla.
+    const put: PutFrame = (frame, tx, ty, dy) => {
+      const f = this.textures.getFrame(ATLAS_KEY, frame);
+      const p = gridToScreen(tx + 0.5, ty + 0.5);
+      rt.batchDrawFrame(
+        ATLAS_KEY,
+        frame,
+        Math.round(p.x - f.pivotX * f.width - originX),
+        Math.round(p.y + dy - f.pivotY * f.height - originY),
+      );
+    };
+
     rt.beginDraw();
-    for (let y = 0; y < this.world.height; y++) {
-      for (let x = 0; x < this.world.width; x++) {
-        const kind = (this.world.tiles[y * this.world.width + x] ?? 0) as TileKind;
-        const frame = TILE_FRAMES[kind] ?? FALLBACK_TILE_FRAME;
-        const center = gridToScreen(x + 0.5, y + 0.5);
-        rt.batchDrawFrame(
-          ATLAS_KEY,
-          frame,
-          center.x - bounds.x - HALF_TILE_W,
-          center.y - bounds.y - HALF_TILE_H,
-        );
-      }
-    }
+    paintTerrain(this.world, put);
     rt.endDraw();
     return rt;
   }
 
   /** Drzewa: jeden `Image` na drzewo, depth ustawiony RAZ (drzewa się nie ruszają). */
   private buildTrees(): Phaser.GameObjects.Image[] {
-    const images: Phaser.GameObjects.Image[] = [];
-    for (const tree of this.world.trees) {
-      const gx = tree.x + 0.5;
-      const gy = tree.y + 0.5;
-      const p = gridToScreen(gx, gy);
-      images.push(
-        this.add
-          .image(p.x, p.y, ATLAS_KEY, TREE_FRAMES[tree.state])
-          .setOrigin(0.5, 1)
-          .setDepth(depthFor(gx, gy)),
-      );
-    }
-    return images;
+    return this.world.trees.map((tree) =>
+      this.buildProp(tree.x, tree.y, TREE_FRAMES[tree.state]),
+    );
+  }
+
+  /** Głazy: statyczne blokery, sprite wg `size` (0 = mały, 1 = duży). */
+  private buildRocks(): Phaser.GameObjects.Image[] {
+    return this.world.rocks.map((rock: Rock) =>
+      this.buildProp(rock.x, rock.y, ROCK_FRAMES[rock.size] ?? ROCK_FRAMES[0]!),
+    );
+  }
+
+  /** Statyczny obiekt stojący stopą na środku kafla, podniesiony o poziom terenu. */
+  private buildProp(tx: number, ty: number, frame: string): Phaser.GameObjects.Image {
+    const gx = tx + 0.5;
+    const gy = ty + 0.5;
+    const p = gridToScreen(gx, gy);
+    return this.add
+      .image(p.x, p.y - elevationAt(this.world, gx, gy) * ELEV_PX, ATLAS_KEY, frame)
+      .setOrigin(0.5, 1)
+      .setDepth(depthFor(gx, gy));
   }
 
   private buildUnitView(unit: Unit): UnitView {
-    const p = gridToScreen(unit.pos.x, unit.pos.y);
+    const p = this.unitScreenPos(unit.pos.x, unit.pos.y);
     const shadow = this.add.image(p.x, p.y, ATLAS_KEY, 'shadow').setOrigin(0.5, 0.5);
     const anim = animKey(unit.kind, unit.moving, unit.facing);
     const sprite = this.add.sprite(p.x, p.y, ATLAS_KEY).setOrigin(0.5, 1);
@@ -203,7 +215,13 @@ export class GameScene extends Phaser.Scene {
 
     const cam = this.cameras.main;
     cam.setBackgroundColor('#0b0c14');
-    cam.setBounds(bounds.x, bounds.y, bounds.width, bounds.height);
+    // Zapas u góry: wierzchy poziomu 1 wystają ponad bounding box mapy.
+    cam.setBounds(
+      bounds.x,
+      bounds.y - TERRAIN_TOP_MARGIN,
+      bounds.width,
+      bounds.height + TERRAIN_TOP_MARGIN,
+    );
     cam.setZoom(zoomFor(width, height));
     cam.startFollow(this.player.sprite, true, 0.12, 0.12);
     cam.setFollowOffset(0, 0);
@@ -241,6 +259,7 @@ export class GameScene extends Phaser.Scene {
         seed: this.seed,
         gx: this.player.unit.pos.x,
         gy: this.player.unit.pos.y,
+        elev: elevationAt(this.world, this.player.unit.pos.x, this.player.unit.pos.y),
       });
     }
   }
@@ -263,12 +282,19 @@ export class GameScene extends Phaser.Scene {
     this.updateLookahead(dir);
   }
 
+  /** Punkt na ekranie dla pozycji w siatce, podniesiony o wysokość terenu pod jednostką. */
+  private unitScreenPos(gx: number, gy: number): Point {
+    const p = gridToScreen(gx, gy);
+    return { x: p.x, y: p.y - elevationAt(this.world, gx, gy) * ELEV_PX };
+  }
+
   /** Pozycje interpolowane między tickami + depth i animacja per klatkę. */
   private renderUnits(alpha: number): void {
     for (const view of this.views.values()) {
       const gx = view.prevX + (view.unit.pos.x - view.prevX) * alpha;
       const gy = view.prevY + (view.unit.pos.y - view.prevY) * alpha;
-      const p = gridToScreen(gx, gy);
+      // Wysokość liczona co klatkę z pozycji interpolowanej — na rampie jednostka wjeżdża płynnie.
+      const p = this.unitScreenPos(gx, gy);
       view.sprite.setPosition(p.x, p.y);
       view.shadow.setPosition(p.x, p.y);
       const depth = depthFor(gx, gy);

@@ -263,3 +263,37 @@ Rampa jest 2-kaflowa, więc ta krawędź trafiała na styk obu kafli i dzieliła
 sąsiedniego (rysowanego później, bo ma większe `gx+gy`) zawiera wszystkie trzy wierzchołki tego
 klina, więc go zamalowuje. Kontrakt `docs/architecture.md` („sprite rampy zawiera własne ścianki
 boczne") zostaje bez zmian, a atlas bez czterech nadmiarowych klatek.
+
+## 2026-09-14 — Render elewacji: `src/render/terrainPaint.ts` jako czysty moduł
+
+Logika „co i w jakiej kolejności trafia na `RenderTexture`" wyszła z `GameScene` do osobnego,
+**czystego** modułu `src/render/terrainPaint.ts` (`paintTerrain`, `paintTile`, `PutFrame`).
+Powód: to jedyna część renderu, która ma nietrywialne reguły (kolejność malarska, wybór
+`cliff_s`/`cliff_e`, wyjątek dla ramp), a w `GameScene` była nietestowalna bez przeglądarki.
+Teraz `tests/render/terrain-paint.test.ts` sprawdza kolejność (`gx + gy`, potem `gx`), wybór klatek
+i przesunięcia pionowe — także na prawdziwym świecie z `generateWorld(42)`. `GameScene` wstrzykuje
+tylko `put`, czyli jedyny fragment zależny od Phasera.
+
+**Pozycja klatki liczona z `pivot` atlasu, nie z tabel offsetów.** `put()` robi
+`left = środekKafla.x - pivotX * w`, `top = środekKafla.y + dy - pivotY * h` (z `Math.round`),
+dokładnie tak jak wzorcowy `terrainScene()` w `scripts/preview-sprites.ts`. Dzięki temu zmiana
+geometrii sprite'a (np. inny `ELEV_PX` albo wyższa ramka rampy) nie wymaga ruszania renderu —
+wystarczy nowy `pivot` w `assets/src/terrain.ts`. Uwaga na konwencję: w renderze punktem
+odniesienia jest **środek kafla** `gridToScreen(tx + 0.5, ty + 0.5)` (podgląd używa
+`gridToScreen(tx, ty)` i traktuje go jako środek — te same wzory, przesunięte o pół kafla).
+
+**Zapas nad mapą: `TERRAIN_TOP_MARGIN = 2 × ELEV_PX`.** Wierzch kafla poziomu 1 idzie o `ELEV_PX`
+ponad bounding box z `mapBounds()`, a sprite rampy (32×26, pivot 18/26) sięga o kolejne `ELEV_PX`
+ponad wierzch swojego kafla. `RenderTexture` i `camera.setBounds` dostają ten zapas u góry;
+`mapBounds()` w `iso.ts` zostaje nietknięte, bo opisuje siatkę, a nie wysokość terenu.
+
+**Wysokość jednostek liczona co klatkę z pozycji interpolowanej.** `unitScreenPos()` odejmuje
+`elevationAt(world, gx, gy) * ELEV_PX` od `gridToScreen` dla sprite'a i cienia, więc wjazd rampą
+jest płynny (zmierzone: elev 0.25/0.50/0.75/1.00 → podniesienie 2.5/5/7.5/10 px). Drzewa i głazy
+(`buildProp`) dostają to samo przesunięcie raz, przy tworzeniu. `depth` zostaje po współrzędnych
+siatki (`depthFor`) — podnoszenie sprite'a nie może zmieniać kolejności rysowania, bo to ta sama
+kolumna siatki, a kafle są malowane od tyłu do przodu.
+
+**HUD: `elev X.X`.** Druga linia debugowa pokazuje `elevationAt` pod robotnikiem (ułamek na rampie).
+Bez tego nie da się z samego zrzutu ekranu odróżnić „stoi na płaskowyżu" od „stoi obok niego" —
+krawędzie N i W nie mają ścian, więc płaskowyż od tej strony nie jest widoczny.
